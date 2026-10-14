@@ -1,3 +1,4 @@
+import { isIgnis, IGNIS_FUTURE_FEATURE_NOTICE } from "src/platform/ignis";
 import { html } from "diff2html";
 import type { EventRef, ViewStateResult, WorkspaceLeaf } from "obsidian";
 import { ItemView, Platform } from "obsidian";
@@ -48,6 +49,10 @@ export default class DiffView extends ItemView {
     }
 
     async setState(state: DiffViewState, _: ViewStateResult): Promise<void> {
+        if (isIgnis()) {
+            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
+            return;
+        }
         this.state = state;
 
         if (Platform.isMobile) {
@@ -69,11 +74,19 @@ export default class DiffView extends ItemView {
     }
 
     async onOpen(): Promise<void> {
+        if (isIgnis()) {
+            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
+            return;
+        }
         await this.refresh();
         return super.onOpen();
     }
 
     async refresh(): Promise<void> {
+        if (isIgnis()) {
+            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
+            return;
+        }
         if (this.state?.bFile && !this.gettingDiff && this.plugin.gitManager) {
             this.gettingDiff = true;
             try {

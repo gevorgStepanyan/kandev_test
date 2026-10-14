@@ -1,0 +1,98 @@
+const { GitServiceError, publicError } = require("./errors");
+
+function mountRoutes(router, service, options) {
+    const origins = new Set(options.origins ?? [options.origin].filter(Boolean));
+    router.use((req, res, next) => {
+        let source = req.headers.origin;
+        if (!source && req.method === "GET") {
+            try {
+                source = new URL(req.headers.referer).origin;
+            } catch {
+                /* no trusted browser source */
+            }
+        }
+        if (!options.enabled || origins.size === 0)
+            return res.status(503).json({
+                error: {
+                    code: "DISABLED",
+                    message:
+                        "Enable the Ignis Git plugin and configure WS_ORIGINS (or IGNIS_GIT_ORIGIN) with an explicit browser origin.",
+                },
+            });
+        if (
+            !origins.has(source) ||
+            req.headers["x-obsidian-git"] !== "1" ||
+            (req.method !== "GET" && !req.is("application/json"))
+        ) {
+            return res.status(403).json({
+                error: {
+                    code: "FORBIDDEN",
+                    message:
+                        "The Git request must originate from the configured Ignis browser.",
+                },
+            });
+        }
+        res.set("Cache-Control", "no-store");
+        next();
+    });
+    const handle = (action) => async (req, res) => {
+        try {
+            const input = req.method === "GET" ? req.query : req.body;
+            if (!input || Object.keys(input).some((key) => key !== "vaultId"))
+                throw new GitServiceError(
+                    "INVALID_REQUEST",
+                    "Only vaultId is accepted.",
+                    400
+                );
+            const result = await action(input.vaultId);
+            res.json(result);
+        } catch (error) {
+            const safe = publicError(error);
+            res.status(safe.status).json({
+                error: {
+                    code: safe.code,
+                    message: safe.message,
+                    reportFile: safe.reportFile,
+                },
+            });
+        }
+    };
+    router.get(
+        "/health",
+        handle((id) => service.health(id))
+    );
+    router.get(
+        "/state",
+        handle((id) => service.state(id))
+    );
+    router.post(
+        "/pull",
+        handle(async (id) => {
+            try {
+                const result = await service.pull(id);
+                if (result.status === "updated") {
+                    try {
+                        await options.reconcile(id);
+                    } catch {
+                        return {
+                            ...result,
+                            refreshWarning:
+                                "Pull succeeded, but vault reconciliation failed. Use Ignis: Refresh vault from disk.",
+                        };
+                    }
+                }
+                return result;
+            } catch (error) {
+                if (error.reportFile) {
+                    try {
+                        await options.reconcile(id);
+                    } catch {
+                        /* preserve the original block error */
+                    }
+                }
+                throw error;
+            }
+        })
+    );
+}
+module.exports = { mountRoutes };

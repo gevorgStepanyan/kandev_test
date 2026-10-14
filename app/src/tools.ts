@@ -1,3 +1,4 @@
+import { isIgnis } from "./platform/ignis";
 import { Platform, TFile } from "obsidian";
 import {
     DIFF_VIEW_CONFIG,
@@ -88,6 +89,10 @@ export default class Tools {
         bRef?: string;
         event?: MouseEvent;
     }) {
+        if (isIgnis()) {
+            this.plugin.displayIgnisFutureFeature();
+            return;
+        }
         let diffStyle = this.plugin.settings.diffStyle;
         if (Platform.isMobileApp) {
             diffStyle = "git_unified";
@@ -116,6 +121,10 @@ export default class Tools {
     }
 
     async openFileAtCommit(file: string, ref: string): Promise<void> {
+        if (isIgnis()) {
+            this.plugin.displayIgnisFutureFeature();
+            return;
+        }
         const state: ReadOnlyFileViewState = { file, ref };
         await this.plugin.app.workspace.getLeaf("tab").setViewState({
             type: READ_ONLY_FILE_VIEW_CONFIG.type,
@@ -125,6 +134,10 @@ export default class Tools {
     }
 
     async runRawCommand() {
+        if (isIgnis()) {
+            this.plugin.displayIgnisFutureFeature();
+            return;
+        }
         if (!(this.plugin.gitManager instanceof SimpleGit)) {
             return;
         }

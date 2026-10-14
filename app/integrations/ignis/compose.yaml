@@ -1,0 +1,22 @@
+services:
+    ignis:
+        build:
+            context: .
+            args:
+                IGNIS_BASE_IMAGE: ${IGNIS_BASE_IMAGE:-ignis-base:pilot}
+        ports:
+            - "8082:8080"
+        environment:
+            PUID: ${PUID:-1000}
+            PGID: ${PGID:-1000}
+            IGNIS_GIT_ENABLED: "true"
+            IGNIS_GIT_ORIGIN: ${IGNIS_GIT_ORIGIN:?Set the exact browser origin, including scheme and port}
+            GIT_SSH_COMMAND: "ssh -i /run/ignis-ssh/id_ed25519 -o UserKnownHostsFile=/run/ignis-ssh/known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes"
+        volumes:
+            - ${IGNIS_VAULTS_DIR:?Set the persistent vault root}:/vaults
+            - ${IGNIS_DATA_DIR:?Set the persistent Ignis data directory}:/app/data
+            - ${IGNIS_SSH_DIR:?Set the server SSH credential directory}:/run/ignis-ssh:ro
+            - obsidian-app:/app/obsidian-app
+        restart: unless-stopped
+volumes:
+    obsidian-app:

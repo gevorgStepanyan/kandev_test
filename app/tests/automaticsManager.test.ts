@@ -62,3 +62,50 @@ describe("AutomaticsManager auto commit-and-sync after file edits", () => {
         manager.unload();
     });
 });
+
+describe("Ignis automatic routines", () => {
+    it("ignores synced commit/push settings and schedules only the 60-minute pull", async () => {
+        vi.useFakeTimers();
+        window.__ignis = { version: "pilot" };
+        const plugin = createFakePlugin();
+        const pull = vi.fn(() => Promise.resolve());
+        Object.assign(plugin, {
+            gitReady: true,
+            settings: {
+                autoSaveInterval: 1,
+                autoPushInterval: 1,
+                autoPullInterval: 60,
+                autoBackupAfterFileChange: true,
+                differentIntervalCommitAndPush: true,
+            },
+            displayIgnisFutureFeature: vi.fn(),
+            localStorage: {
+                getPausedAutomatics: () => false,
+                getLastAutoBackup: () => undefined,
+                getLastAutoPull: () => undefined,
+                getLastAutoPush: () => undefined,
+                setLastAutoPull: vi.fn(),
+            },
+            promiseQueue: new PromiseQueue(),
+            gitActions: {
+                pullChangesFromRemote: pull,
+                commit: vi.fn(),
+                push: vi.fn(),
+            },
+        });
+        const manager = new AutomaticsManager(plugin);
+        try {
+            await manager.init();
+            expect(plugin.autoCommitDebouncer).toBeUndefined();
+            expect(vi.getTimerCount()).toBe(1);
+            await vi.advanceTimersByTimeAsync(60 * 60000);
+            expect(pull).toHaveBeenCalledOnce();
+            expect(plugin.gitActions.commit).not.toHaveBeenCalled();
+            expect(plugin.gitActions.push).not.toHaveBeenCalled();
+        } finally {
+            manager.unload();
+            delete window.__ignis;
+            vi.useRealTimers();
+        }
+    });
+});

@@ -1,3 +1,11 @@
+import { IgnisGitManager } from "./gitManager/ignisGit";
+import {
+    gitBackendForRuntime,
+    isIgnis,
+    IgnisGitError,
+    IgnisUnsupportedGitFeatureError,
+    IGNIS_FUTURE_FEATURE_NOTICE,
+} from "./platform/ignis";
 import { Errors } from "isomorphic-git";
 import type { Debouncer, Menu, TAbstractFile, WorkspaceLeaf } from "obsidian";
 import {
@@ -452,7 +460,8 @@ export default class ObsidianGit extends Plugin {
             const gitManager = this.app.vault.adapter;
             if (
                 type === "obsidian-git:menu" &&
-                gitManager instanceof FileSystemAdapter
+                gitManager instanceof FileSystemAdapter &&
+                !isIgnis()
             ) {
                 menu.addItem((item) => {
                     item.setTitle("Open in default app")
@@ -547,7 +556,7 @@ export default class ObsidianGit extends Plugin {
     }
 
     get useSimpleGit(): boolean {
-        return Platform.isDesktopApp;
+        return Platform.isDesktopApp && !isIgnis();
     }
 
     async init({ fromReload = false }): Promise<void> {
@@ -568,7 +577,9 @@ export default class ObsidianGit extends Plugin {
         }
 
         try {
-            if (this.useSimpleGit) {
+            if (gitBackendForRuntime(Platform.isDesktopApp) === "ignis") {
+                this.gitManager = new IgnisGitManager(this);
+            } else if (this.useSimpleGit) {
                 this.gitManager = new SimpleGit(this);
                 await (this.gitManager as SimpleGit).setGitInstance();
             } else {
@@ -583,12 +594,19 @@ export default class ObsidianGit extends Plugin {
             switch (result) {
                 case "missing-git":
                     this.displayError(
-                        `Cannot run git command. Trying to run: '${this.localStorage.getGitPath() || "git"}' .`
+                        isIgnis()
+                            ? new IgnisGitError(
+                                  "GIT_MISSING",
+                                  "Git is not installed on the Ignis server."
+                              )
+                            : `Cannot run git command. Trying to run: '${this.localStorage.getGitPath() || "git"}' .`
                     );
                     break;
                 case "missing-repo":
                     new Notice(
-                        "Cannot find a Git repository. Please create one via the given command, clone an existing repo or configure repo location.",
+                        isIgnis()
+                            ? "No Git repository was found at the vault root. Initialize and configure it outside Ignis."
+                            : "Cannot find a Git repository. Please create one via the given command, clone an existing repo or configure repo location.",
                         10000
                     );
                     break;
@@ -786,6 +804,17 @@ export default class ObsidianGit extends Plugin {
     }
 
     displayError(data: unknown, timeout: number = 10 * 1000): void {
+        if (data instanceof IgnisUnsupportedGitFeatureError) {
+            this.displayIgnisFutureFeature();
+            return;
+        }
+        if (data instanceof IgnisGitError) {
+            if (data.code === "NETWORK")
+                this.setPluginState({ offlineMode: true });
+            new Notice(data.message, timeout);
+            this.statusBar?.displayMessage(data.message, timeout);
+            return;
+        }
         if (data instanceof Errors.UserCanceledError) {
             new Notice("Aborted");
             return;
@@ -802,6 +831,10 @@ export default class ObsidianGit extends Plugin {
         }
         console.error(`${this.manifest.id}:`, error.stack);
         this.statusBar?.displayMessage(error.message.toLowerCase(), timeout);
+    }
+
+    displayIgnisFutureFeature(): void {
+        new Notice(IGNIS_FUTURE_FEATURE_NOTICE);
     }
 
     log(...data: unknown[]) {

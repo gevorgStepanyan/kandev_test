@@ -1,3 +1,4 @@
+import { isIgnis, IgnisUnsupportedGitFeatureError } from "./platform/ignis";
 import { Errors } from "isomorphic-git";
 import { GitConflictError, NoNetworkError, type Status } from "./types";
 
@@ -16,9 +17,12 @@ export interface GitActionHost {
 
 export async function runGitAction<T>(
     host: GitActionHost,
-    action: () => Promise<T>
+    action: () => Promise<T>,
+    ignisSupported = false
 ): Promise<GitActionResult<T>> {
     try {
+        if (isIgnis() && !ignisSupported)
+            throw new IgnisUnsupportedGitFeatureError();
         return { status: "success", value: await action() };
     } catch (error) {
         await reportGitError(host, error);

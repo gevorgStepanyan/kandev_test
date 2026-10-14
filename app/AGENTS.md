@@ -27,6 +27,10 @@ Before changing behavior, identify whether it belongs in the shared
 specific UI/editor feature. Changes that work only with native Git are not
 automatically valid on mobile.
 
+## Ignis
+
+Ignis is a platform that runs Obsidian as a web application. Its codebase can be found at `./ignis`. Use that folder only as a reference to read and understand the Ignis implementation. Do not make changes to Ignis in this repository. You are developing `obsidian-git` to work with Ignis.
+
 ## Environment and commands
 
 Use Node.js `>=24` and pnpm `>=11`, as declared in `package.json`. Use pnpm,

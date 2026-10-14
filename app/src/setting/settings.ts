@@ -1,3 +1,4 @@
+import { isIgnis } from "src/platform/ignis";
 import type {
     App,
     RGB,
@@ -175,6 +176,12 @@ export class ObsidianGitSettingsTab extends PluginSettingTab {
         const mobile = () => this.plugin.gitManager instanceof IsomorphicGit;
         const automatic = this.commitOrSync;
         return [
+            {
+                name: "Ignis pull-only pilot",
+                desc: "Only Pull and repository status are available. Automatic commit, sync and push settings are ignored here. Auto pull interval accepts minutes (for example 60) and runs only while the browser is active. Configure the repository and SSH on the server. Close editable Markdown panes before Pull.",
+                visible: isIgnis,
+                status: "warning",
+            },
             {
                 name: "Git is not ready",
                 desc: "When the repository is ready, automatic routines, commit, sync, and editor settings become available. Check the repository paths and Git configuration under Advanced.",

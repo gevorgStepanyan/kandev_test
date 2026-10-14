@@ -1,3 +1,4 @@
+import { isIgnis, IGNIS_FUTURE_FEATURE_NOTICE } from "src/platform/ignis";
 import { standardKeymap } from "@codemirror/commands";
 import { search } from "@codemirror/search";
 import { EditorState } from "@codemirror/state";
@@ -67,6 +68,10 @@ export default class ReadOnlyFileView extends ItemView {
         state: ReadOnlyFileViewState,
         result: ViewStateResult
     ): Promise<void> {
+        if (isIgnis()) {
+            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
+            return;
+        }
         this.state = state;
         await super.setState(state, result);
 
@@ -80,6 +85,10 @@ export default class ReadOnlyFileView extends ItemView {
     }
 
     async onOpen(): Promise<void> {
+        if (isIgnis()) {
+            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
+            return;
+        }
         await this.renderFile();
         await super.onOpen();
     }

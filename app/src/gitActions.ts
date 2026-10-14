@@ -1,3 +1,8 @@
+import {
+    isIgnis,
+    IgnisGitError,
+    IgnisUnsupportedGitFeatureError,
+} from "./platform/ignis";
 import { Errors } from "isomorphic-git";
 import { normalizePath, Notice, Platform, TFile, moment } from "obsidian";
 import * as fsPromises from "fs/promises";
@@ -300,14 +305,19 @@ export class GitActions {
     }
 
     private runReadyGitAction<T>(
-        action: () => Promise<T>
+        action: () => Promise<T>,
+        ignisSupported = false
     ): Promise<GitActionResult<T | NotReadyResult>> {
-        return runGitAction(this.plugin, async () => {
-            if (!(await this.plugin.isAllInitialized())) {
-                return { status: "skipped", reason: "not-ready" };
-            }
-            return action();
-        });
+        return runGitAction(
+            this.plugin,
+            async () => {
+                if (!(await this.plugin.isAllInitialized())) {
+                    return { status: "skipped", reason: "not-ready" };
+                }
+                return action();
+            },
+            ignisSupported
+        );
     }
 
     async listChangedFiles(): Promise<GitActionResult<ListChangedFilesResult>> {
@@ -325,7 +335,7 @@ export class GitActions {
 
                 new ChangedFilesModal(this.plugin, status.all).open();
                 return { status: "displayed" };
-            });
+            }, true);
         if (actionResult.status === "success") {
             this.reportListChangedFilesResult(actionResult.value);
         }
@@ -835,7 +845,10 @@ export class GitActions {
     }
 
     async pull(): Promise<GitActionResult<PullResult>> {
-        return this.runReadyGitAction<PullResult>(() => this.performPull());
+        return this.runReadyGitAction<PullResult>(
+            () => this.performPull(),
+            true
+        );
     }
 
     private async performPull(): Promise<PullResult> {
@@ -963,6 +976,10 @@ export class GitActions {
     async runRawCommand(
         command: string
     ): Promise<GitActionResult<RawCommandResult>> {
+        if (isIgnis())
+            return runGitAction(this.plugin, () =>
+                Promise.reject(new IgnisUnsupportedGitFeatureError())
+            );
         const notice = new Notice(`Running '${command}'...`, 999_999);
         const actionResult = await runGitAction<RawCommandResult>(
             this.plugin,
@@ -1147,6 +1164,14 @@ export class GitActions {
      * upstream on the first push, skip the pull and let that push establish it.
      */
     async isPullRemoteSet(): Promise<boolean> {
+        if (isIgnis()) {
+            if ((await this.plugin.gitManager.branchInfo()).tracking)
+                return true;
+            throw new IgnisGitError(
+                "NO_UPSTREAM",
+                "No upstream branch is configured. Set it in an authorized Git environment outside Ignis."
+            );
+        }
         if (this.plugin.settings.updateSubmodules) {
             return true;
         }

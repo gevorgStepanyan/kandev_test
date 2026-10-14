@@ -1,3 +1,4 @@
+import { isIgnis } from "src/platform/ignis";
 import { FuzzySuggestModal } from "obsidian";
 import type ObsidianGit from "src/main";
 import type { FileStatusResult } from "src/types";
@@ -41,7 +42,8 @@ export class ChangedFilesModal extends FuzzySuggestModal<FileStatusResult> {
                 ""
             ) == null
         ) {
-            this.app.openWithDefaultApp(item.vaultPath);
+            if (isIgnis()) this.plugin.displayIgnisFutureFeature();
+            else this.app.openWithDefaultApp(item.vaultPath);
         } else {
             void this.plugin.app.workspace.openLinkText(item.vaultPath, "/");
         }

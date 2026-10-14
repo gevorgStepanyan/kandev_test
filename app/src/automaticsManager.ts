@@ -1,3 +1,4 @@
+import { isIgnis } from "./platform/ignis";
 import { debounce } from "obsidian";
 import type ObsidianGit from "./main";
 
@@ -29,10 +30,16 @@ export default class AutomaticsManager {
     }
 
     async init() {
-        await this.setUpAutoCommitAndSync();
+        if (!isIgnis()) await this.setUpAutoCommitAndSync();
+        else if (
+            this.plugin.settings.autoSaveInterval > 0 ||
+            this.plugin.settings.autoPushInterval > 0
+        )
+            this.plugin.displayIgnisFutureFeature();
         const lastAutos = this.loadLastAuto();
 
         if (
+            !isIgnis() &&
             this.plugin.settings.differentIntervalCommitAndPush &&
             this.plugin.settings.autoPushInterval > 0
         ) {
@@ -66,7 +73,7 @@ export default class AutomaticsManager {
     reload(...type: ("commit" | "push" | "pull")[]) {
         if (this.plugin.localStorage.getPausedAutomatics()) return;
 
-        if (type.contains("commit")) {
+        if (!isIgnis() && type.contains("commit")) {
             this.clearAutoCommitAndSync();
             if (this.plugin.settings.autoSaveInterval > 0) {
                 this.startAutoCommitAndSync(
@@ -74,7 +81,7 @@ export default class AutomaticsManager {
                 );
             }
         }
-        if (type.contains("push")) {
+        if (!isIgnis() && type.contains("push")) {
             this.clearAutoPush();
             if (
                 this.plugin.settings.differentIntervalCommitAndPush &&
@@ -128,6 +135,7 @@ export default class AutomaticsManager {
     }
 
     private startAutoCommitAndSync(minutes?: number) {
+        if (isIgnis()) return;
         if (this.isAutomaticsDisabled) {
             return;
         }
@@ -160,6 +168,7 @@ export default class AutomaticsManager {
 
     // This is used for both auto commit-and-sync and commit only
     private doAutoCommitAndSync(): void {
+        if (isIgnis()) return;
         this.plugin.promiseQueue.addTask(
             async () => {
                 // Re-check if the auto commit should run now or be postponed,
@@ -229,6 +238,7 @@ export default class AutomaticsManager {
     }
 
     private startAutoPush(minutes?: number) {
+        if (isIgnis()) return;
         if (this.isAutomaticsDisabled) {
             return;
         }
@@ -240,6 +250,7 @@ export default class AutomaticsManager {
     }
 
     private doAutoPush(): void {
+        if (isIgnis()) return;
         this.plugin.promiseQueue.addTask(
             () => this.plugin.gitActions.push(),
             () => {

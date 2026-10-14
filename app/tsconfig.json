@@ -17,5 +17,6 @@
         "lib": ["ES2021", "DOM"],
         "verbatimModuleSyntax": true
     },
-    "include": ["**/*.ts", "**/*.svelte"]
+    "include": ["**/*.ts", "**/*.svelte"],
+    "exclude": ["node_modules", "ignis"]
 }

@@ -1,3 +1,4 @@
+import { isIgnis } from "src/platform/ignis";
 import type ObsidianGit from "src/main";
 import { LineAuthoringFeature } from "./lineAuthor/lineAuthorIntegration";
 import { SignsFeature } from "./signs/signsIntegration";
@@ -20,6 +21,7 @@ export class EditorIntegration {
     }
 
     onLoadPlugin() {
+        if (isIgnis()) return;
         eventsPerFilePathSingleton.init();
         this.plg.registerEditorExtension(subscribeNewEditor);
         this.plg.registerEditorExtension(conflictExtensions);

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { isIgnis, IGNIS_FUTURE_FEATURE_NOTICE } from "src/platform/ignis";
     import { Menu, Platform, Scope, setIcon } from "obsidian";
     import { SOURCE_CONTROL_VIEW_CONFIG } from "src/constants";
     import type ObsidianGit from "src/main";
@@ -151,6 +152,7 @@
     });
 
     function getCommitActionDescription(sync: boolean): string {
+        if (isIgnis()) return IGNIS_FUTURE_FEATURE_NOTICE;
         const suffix = sync ? " and sync" : "";
         if (hasConflicts) {
             return "Resolve conflicts before committing";
@@ -176,6 +178,7 @@
     }
 
     function canCommit(mode: CommitMode): boolean {
+        if (isIgnis()) return true;
         if (hasConflicts) return false;
         if (mode === "staged") return stagedCount > 0;
         if (mode === "all") return hasChanges;
@@ -187,11 +190,16 @@
     }
 
     function canCommitAndSync(mode: "staged" | "all"): boolean {
+        if (isIgnis()) return true;
         if (hasConflicts) return false;
         return mode === "all" || stagedCount > 0;
     }
 
     function commit(mode: CommitMode = "smart") {
+        if (isIgnis()) {
+            plugin.displayIgnisFutureFeature();
+            return;
+        }
         if (!canCommit(mode)) return;
         loading = true;
         if (status) {
@@ -205,6 +213,10 @@
     }
 
     function amendStaged() {
+        if (isIgnis()) {
+            plugin.displayIgnisFutureFeature();
+            return;
+        }
         if (!canCommit("staged")) return;
         loading = true;
         plugin.promiseQueue.addTask(() =>
@@ -221,6 +233,10 @@
     }
 
     function commitAndSync(mode: "staged" | "all" = "all") {
+        if (isIgnis()) {
+            plugin.displayIgnisFutureFeature();
+            return;
+        }
         if (!canCommitAndSync(mode)) return;
         loading = true;
         if (status) {
@@ -240,6 +256,10 @@
     }
 
     function showCommitMenu(event: MouseEvent) {
+        if (isIgnis()) {
+            plugin.displayIgnisFutureFeature();
+            return;
+        }
         event.stopPropagation();
         const menu = Menu.forEvent(event);
         menu.addItem((item) =>
@@ -392,18 +412,30 @@
     }
 
     function stageAll(event: MouseEvent) {
+        if (isIgnis()) {
+            plugin.displayIgnisFutureFeature();
+            return;
+        }
         event.stopPropagation();
         loading = true;
         plugin.promiseQueue.addTask(() => plugin.gitActions.stageAll());
     }
 
     function unstageAll(event: MouseEvent) {
+        if (isIgnis()) {
+            plugin.displayIgnisFutureFeature();
+            return;
+        }
         event.stopPropagation();
         loading = true;
         plugin.promiseQueue.addTask(() => plugin.gitActions.unstageAll());
     }
 
     function push() {
+        if (isIgnis()) {
+            plugin.displayIgnisFutureFeature();
+            return;
+        }
         loading = true;
         plugin.promiseQueue.addTask(() =>
             plugin.gitActions.push().finally(triggerRefresh)
@@ -416,6 +448,10 @@
         );
     }
     function discard(event: Event) {
+        if (isIgnis()) {
+            plugin.displayIgnisFutureFeature();
+            return;
+        }
         event.stopPropagation();
         plugin.promiseQueue.addTask(() => plugin.gitActions.discardAll());
     }
@@ -430,6 +466,13 @@
     class="git-view"
     class:repository-missing={repositoryMissing}
 >
+    {#if isIgnis()}
+        <p>
+            Ignis pilot: Pull and repository status are available. Commit, Push,
+            staging, history and diff tools are planned. Automatic Pull runs
+            only while this browser is active.
+        </p>
+    {/if}
     {#if repositoryMissing}
         <div class="repository-notice">
             <p>No Git repository found.</p>

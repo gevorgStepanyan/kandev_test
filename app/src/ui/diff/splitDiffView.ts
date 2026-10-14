@@ -1,3 +1,4 @@
+import { isIgnis, IGNIS_FUTURE_FEATURE_NOTICE } from "src/platform/ignis";
 import type { Debouncer, ViewStateResult, WorkspaceLeaf } from "obsidian";
 import { debounce, ItemView, Platform, setIcon } from "obsidian";
 import { DEFAULT_SETTINGS, SPLIT_DIFF_VIEW_CONFIG } from "src/constants";
@@ -61,6 +62,10 @@ export default class SplitDiffView extends ItemView {
         private plugin: ObsidianGit
     ) {
         super(leaf);
+        if (isIgnis()) {
+            this.intervalRef = 0;
+            return;
+        }
         this.navigation = true;
         this.registerEvent(
             this.app.workspace.on("obsidian-git:status-changed", () => {
@@ -180,6 +185,10 @@ export default class SplitDiffView extends ItemView {
     }
 
     async setState(state: DiffViewState, _: ViewStateResult): Promise<void> {
+        if (isIgnis()) {
+            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
+            return;
+        }
         this.state = state;
 
         if (Platform.isMobile) {
@@ -201,6 +210,10 @@ export default class SplitDiffView extends ItemView {
     }
 
     async onOpen(): Promise<void> {
+        if (isIgnis()) {
+            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
+            return;
+        }
         await this.createMergeView();
         return super.onOpen();
     }

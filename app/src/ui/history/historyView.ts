@@ -1,3 +1,4 @@
+import { isIgnis, IGNIS_FUTURE_FEATURE_NOTICE } from "src/platform/ignis";
 import type { HoverParent, HoverPopover, WorkspaceLeaf } from "obsidian";
 import { ItemView } from "obsidian";
 import { HISTORY_VIEW_CONFIG } from "src/constants";
@@ -36,6 +37,10 @@ export default class HistoryView extends ItemView implements HoverParent {
     }
 
     async reload(): Promise<void> {
+        if (isIgnis()) {
+            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
+            return;
+        }
         if (this._view) {
             await unmount(this._view);
         }
@@ -49,6 +54,10 @@ export default class HistoryView extends ItemView implements HoverParent {
     }
 
     async onOpen(): Promise<void> {
+        if (isIgnis()) {
+            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
+            return;
+        }
         await this.reload();
         return super.onOpen();
     }

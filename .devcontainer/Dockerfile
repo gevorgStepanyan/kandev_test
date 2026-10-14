@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     npm \
     git \
     ripgrep \
+    procps \
   && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @openai/codex kandev@latest
