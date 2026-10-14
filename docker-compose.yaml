@@ -1,0 +1,21 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: ./.devcontainer/Dockerfile
+    working_dir: /workspace
+    volumes:
+      # Agent sees only /project/app
+      - ./app:/workspace:rw
+    ports:
+      - "5000:5000" #demo app server
+      - "38429:38429" #kandev server
+    # cap_drop:
+    #   - ALL
+    # security_opt:
+    #   - no-new-privileges
+    pids_limit: 512
+    command: sleep infinity
+    environment:
+      GIT_AUTHOR_NAME: "AI Agent"
+      GIT_AUTHOR_EMAIL: "ai-agent@example.local"

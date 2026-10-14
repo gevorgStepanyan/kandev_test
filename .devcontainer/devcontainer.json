@@ -1,0 +1,21 @@
+{
+  "name": "Codex Sandbox Starter Pack",
+
+  "dockerComposeFile": "../docker-compose.yaml",
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+
+  "remoteUser": "codex",
+  "containerUser": "codex",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode-remote.remote-containers",
+        "ms-python.python"
+        // "openai.chatgpt" // If you want the codex extension in the devcontainer
+      ]
+    }
+  }
+}
