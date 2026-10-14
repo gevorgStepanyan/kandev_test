@@ -1,4 +1,4 @@
-# Codex Sandbox Starter Pack (Beginner Friendly)
+# Kandev Sandbox Starter Pack 
 
 This repo is containes a dev container setup with Codex. The goal is to keep Codex’s actions **inside `./app` folder**, not across your whole device. 
 
