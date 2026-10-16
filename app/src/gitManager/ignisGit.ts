@@ -24,7 +24,11 @@ export class IgnisGitManager extends GitManager {
     private stateExpires = 0;
     private unloaded = false;
 
-    private async request(endpoint: string, post = false): Promise<unknown> {
+    private async request(
+        endpoint: string,
+        post = false,
+        payload: { path?: string; dir?: string } = {}
+    ): Promise<unknown> {
         if (this.unloaded)
             throw new IgnisGitError(
                 "UNLOADED",
@@ -49,7 +53,8 @@ export class IgnisGitManager extends GitManager {
                 endpoint,
                 vaultId,
                 controller.signal,
-                post
+                post,
+                payload
             );
         } finally {
             window.clearTimeout(timer);
@@ -214,17 +219,82 @@ export class IgnisGitManager extends GitManager {
     commit(): Promise<number> {
         return this.unsupported();
     }
-    stageAll(): Promise<void> {
-        return this.unsupported();
+    private async mutateIndex(
+        operation: "stage" | "unstage" | "stage-all" | "unstage-all",
+        payload: { path?: string; dir?: string }
+    ): Promise<void> {
+        if (operation.startsWith("stage")) this.ensureStagingSafe();
+        this.pendingState = undefined;
+        try {
+            const value = await this.request(operation, true, payload);
+            if (
+                !record(value) ||
+                value.status !== "updated" ||
+                value.operation !== operation
+            )
+                throw new IgnisGitError(
+                    "INVALID_RESPONSE",
+                    "Invalid Ignis staging response. Refresh repository state before retrying."
+                );
+        } finally {
+            // Also invalidate on transport failure: a cancelled request may
+            // already have changed the server's index.
+            this.pendingState = undefined;
+            this.app.workspace.trigger("obsidian-git:refresh");
+        }
     }
-    unstageAll(): Promise<void> {
-        return this.unsupported();
+
+    private ensureStagingSafe(): void {
+        const writes = window.__ignis?.writes;
+        if (!writes)
+            throw new IgnisGitError(
+                "BROWSER_STATE",
+                "The Ignis write-safety API is unavailable. Update Ignis before staging."
+            );
+        if (
+            (writes.listPending?.().length ?? 0) ||
+            writes.listFailed().length ||
+            writes.getState() !== "clean" ||
+            writes.getDetail().pending
+        )
+            throw new IgnisGitError(
+                "BROWSER_DIRTY",
+                "Wait for Ignis writes to finish and resolve failed writes before staging. Staging records the last persisted content."
+            );
+        this.app.workspace.iterateAllLeaves((leaf) => {
+            if (
+                leaf.view instanceof MarkdownView &&
+                leaf.view.getMode() === "source"
+            )
+                throw new IgnisGitError(
+                    "BROWSER_DIRTY",
+                    "Switch editable Markdown panes to reading view or close them, then wait for Ignis writes to finish before staging. Staging records the last persisted content."
+                );
+        });
+        // The public Ignis API exposes delayed write status, not a save/flush
+        // barrier. Make the persisted-snapshot semantics explicit rather than
+        // claiming the editor buffer or a very recent save is included.
+        this.plugin.displayMessage(
+            "Staging content currently saved on the Ignis server. Recent editor saves may not be included; review Changes after staging."
+        );
     }
-    stage(): Promise<void> {
-        return this.unsupported();
+
+    stageAll(options: { dir?: string; status?: Status }): Promise<void> {
+        // dir is already repository-relative at existing UI call sites.
+        return this.mutateIndex("stage-all", { dir: options.dir });
     }
-    unstage(): Promise<void> {
-        return this.unsupported();
+    unstageAll(options: { dir?: string; status?: Status }): Promise<void> {
+        return this.mutateIndex("unstage-all", { dir: options.dir });
+    }
+    stage(filepath: string, relativeToVault: boolean): Promise<void> {
+        return this.mutateIndex("stage", {
+            path: this.getRelativeRepoPath(filepath, relativeToVault),
+        });
+    }
+    unstage(filepath: string, relativeToVault: boolean): Promise<void> {
+        return this.mutateIndex("unstage", {
+            path: this.getRelativeRepoPath(filepath, relativeToVault),
+        });
     }
     discard(): Promise<void> {
         return this.unsupported();

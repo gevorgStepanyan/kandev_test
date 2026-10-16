@@ -1,7 +1,9 @@
 const { GitServiceError, publicError } = require("./errors");
 
 function mountRoutes(router, service, options) {
-    const origins = new Set(options.origins ?? [options.origin].filter(Boolean));
+    const origins = new Set(
+        options.origins ?? [options.origin].filter(Boolean)
+    );
     router.use((req, res, next) => {
         let source = req.headers.origin;
         if (!source && req.method === "GET") {
@@ -35,28 +37,37 @@ function mountRoutes(router, service, options) {
         res.set("Cache-Control", "no-store");
         next();
     });
-    const handle = (action) => async (req, res) => {
-        try {
-            const input = req.method === "GET" ? req.query : req.body;
-            if (!input || Object.keys(input).some((key) => key !== "vaultId"))
-                throw new GitServiceError(
-                    "INVALID_REQUEST",
-                    "Only vaultId is accepted.",
-                    400
-                );
-            const result = await action(input.vaultId);
-            res.json(result);
-        } catch (error) {
-            const safe = publicError(error);
-            res.status(safe.status).json({
-                error: {
-                    code: safe.code,
-                    message: safe.message,
-                    reportFile: safe.reportFile,
-                },
-            });
-        }
-    };
+    const handle =
+        (action, fields = []) =>
+        async (req, res) => {
+            try {
+                const input = req.method === "GET" ? req.query : req.body;
+                if (
+                    !input ||
+                    typeof input !== "object" ||
+                    Array.isArray(input) ||
+                    Object.keys(input).some(
+                        (key) => !["vaultId", ...fields].includes(key)
+                    )
+                )
+                    throw new GitServiceError(
+                        "INVALID_REQUEST",
+                        "Unexpected request fields.",
+                        400
+                    );
+                const result = await action(input.vaultId, input);
+                res.json(result);
+            } catch (error) {
+                const safe = publicError(error);
+                res.status(safe.status).json({
+                    error: {
+                        code: safe.code,
+                        message: safe.message,
+                        reportFile: safe.reportFile,
+                    },
+                });
+            }
+        };
     router.get(
         "/health",
         handle((id) => service.health(id))
@@ -65,6 +76,16 @@ function mountRoutes(router, service, options) {
         "/state",
         handle((id) => service.state(id))
     );
+    for (const operation of ["stage", "unstage", "stage-all", "unstage-all"]) {
+        const field = operation.endsWith("-all") ? "dir" : "path";
+        router.post(
+            `/${operation}`,
+            handle(
+                (id, input) => service.mutateIndex(id, operation, input[field]),
+                [field]
+            )
+        );
+    }
     router.post(
         "/pull",
         handle(async (id) => {

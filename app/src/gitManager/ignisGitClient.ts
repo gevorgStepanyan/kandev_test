@@ -94,7 +94,8 @@ export async function ignisRequest(
     endpoint: string,
     vaultId: string,
     signal: AbortSignal,
-    post = false
+    post = false,
+    payload: { path?: string; dir?: string } = {}
 ): Promise<unknown> {
     let response: Response;
     try {
@@ -108,7 +109,9 @@ export async function ignisRequest(
                     "X-Obsidian-Git": "1",
                     ...(post ? { "Content-Type": "application/json" } : {}),
                 },
-                body: post ? JSON.stringify({ vaultId }) : undefined,
+                body: post
+                    ? JSON.stringify({ vaultId, ...payload })
+                    : undefined,
             }
         );
     } catch (_error) {

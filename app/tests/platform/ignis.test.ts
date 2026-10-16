@@ -33,8 +33,20 @@ describe("Ignis runtime capabilities", () => {
         expect(notice).toHaveBeenCalledOnce();
         expect(mutate).not.toHaveBeenCalled();
         expect(guarded.checkCallback).toBeUndefined();
-        const pull = { id: "pull", name: "Pull", callback: mutate };
-        expect(commandForRuntime(pull, notice)).toBe(pull);
+        for (const id of [
+            "pull",
+            "stage-current-file",
+            "unstage-current-file",
+        ]) {
+            const command = { id, name: id, callback: mutate };
+            expect(commandForRuntime(command, notice)).toBe(command);
+        }
+        const hunk = commandForRuntime(
+            { id: "stage-hunk", name: "Stage hunk", callback: mutate },
+            notice
+        );
+        hunk.callback?.();
+        expect(mutate).not.toHaveBeenCalled();
     });
     it("blocks public GitActions before readiness, prompts or direct filesystem operations", async () => {
         window.__ignis = { version: "pilot" };

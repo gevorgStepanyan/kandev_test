@@ -8,6 +8,7 @@ export interface IgnisRuntime {
     writes?: {
         getState(): string;
         listFailed(): string[];
+        listPending?(): string[];
         getDetail(): { pending: number; retrying: number };
     };
 }
@@ -41,6 +42,8 @@ export function commandForRuntime(
         !isIgnis() ||
         [
             "pull",
+            "stage-current-file",
+            "unstage-current-file",
             "open-git-view",
             "list-changed-files",
             "pause-automatic-routines",

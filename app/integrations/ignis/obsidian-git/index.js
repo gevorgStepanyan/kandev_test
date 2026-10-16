@@ -3,9 +3,9 @@ const { mountRoutes } = require("./routes");
 const { routeOptions } = require("./configuration");
 module.exports = {
     id: "obsidian-git",
-    name: "Obsidian Git (pull-only pilot)",
+    name: "Obsidian Git (Pull and staging)",
     description:
-        "Native fast-forward-only pulls for the Obsidian Git browser backend",
+        "Native fast-forward-only pulls and index staging for the Obsidian Git browser backend",
     async register(ctx) {
         this.service = new GitService(ctx);
         const cache = require("../../cache");

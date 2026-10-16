@@ -37,6 +37,7 @@ function setup() {
         displayMessage: vi.fn(),
         isAllInitialized: vi.fn(() => Promise.resolve(true)),
     });
+    Object.assign(plugin.app, { vault: { getFiles: () => [] } });
     const manager = new IgnisGitManager(plugin);
     plugin.gitManager = manager;
     return { manager, plugin, iterateAllLeaves };
@@ -49,6 +50,7 @@ beforeEach(() => {
         writes: {
             getState: () => "clean",
             listFailed: () => [],
+            listPending: () => [],
             getDetail: () => ({ pending: 0, retrying: 0 }),
         },
     };
@@ -230,7 +232,6 @@ describe("IgnisGitManager", () => {
         for (const action of [
             () => manager.commit(),
             () => manager.push(),
-            () => manager.stage(),
             () => manager.discardAll(),
             () => manager.init(),
             () => manager.clone(),
@@ -278,5 +279,226 @@ describe("IgnisGitManager", () => {
             expect.any(IgnisGitError)
         );
         expect(fetchMock).toHaveBeenCalledOnce();
+    });
+});
+
+describe("Ignis staging", () => {
+    beforeEach(() => {
+        fetchMock.mockImplementation(async (url, options) => {
+            if (options?.method !== "POST") return response(state);
+            const operation = String(url).split("/").pop();
+            return response({ status: "updated", operation });
+        });
+    });
+
+    it.each([true, false])(
+        "converts a single path exactly once (vault relative: %s)",
+        async (relativeToVault) => {
+            const { manager } = setup();
+            const convert = vi.spyOn(manager, "getRelativeRepoPath");
+            await manager.stage("Notes/雪 [1].md", relativeToVault);
+            expect(convert).toHaveBeenCalledExactlyOnceWith(
+                "Notes/雪 [1].md",
+                relativeToVault
+            );
+            const call = fetchMock.mock.calls.find(
+                ([, options]) => options?.method === "POST"
+            );
+            expect(call?.[0]).toBe("/api/ext/obsidian-git/stage");
+            expect(call?.[1]).toMatchObject({
+                credentials: "same-origin",
+                body: JSON.stringify({
+                    vaultId: "Main & Work",
+                    path: "Notes/雪 [1].md",
+                }),
+            });
+        }
+    );
+
+    it("maps all four methods and ignores cached status as an input list", async () => {
+        const { manager, plugin } = setup();
+        await manager.stageAll({ status: emptyStatus });
+        await manager.stageAll({ dir: "Notes" });
+        await manager.unstage("Notes/file.md", false);
+        await manager.unstageAll({});
+        await manager.unstageAll({ dir: "Notes", status: emptyStatus });
+        const calls = fetchMock.mock.calls.filter(
+            ([, options]) => options?.method === "POST"
+        );
+        expect(
+            calls.map(([url, options]) => [
+                url,
+                JSON.parse(options!.body as string),
+            ])
+        ).toEqual([
+            ["/api/ext/obsidian-git/stage-all", { vaultId: "Main & Work" }],
+            [
+                "/api/ext/obsidian-git/stage-all",
+                { vaultId: "Main & Work", dir: "Notes" },
+            ],
+            [
+                "/api/ext/obsidian-git/unstage",
+                { vaultId: "Main & Work", path: "Notes/file.md" },
+            ],
+            ["/api/ext/obsidian-git/unstage-all", { vaultId: "Main & Work" }],
+            [
+                "/api/ext/obsidian-git/unstage-all",
+                { vaultId: "Main & Work", dir: "Notes" },
+            ],
+        ]);
+        expect(
+            plugin.app.workspace.trigger.mock.calls.filter(
+                ([event]) => event === "obsidian-git:refresh"
+            )
+        ).toHaveLength(5);
+    });
+
+    it("awaits server confirmation, invalidates status and refreshes direct manager calls", async () => {
+        const { manager, plugin } = setup();
+        await manager.status();
+        let finish!: (response: Response) => void;
+        fetchMock.mockImplementationOnce(
+            () =>
+                new Promise<Response>((resolve) => {
+                    finish = resolve;
+                })
+        );
+        let done = false;
+        const request = manager.unstageAll({}).then(() => {
+            done = true;
+        });
+        await Promise.resolve();
+        expect(done).toBe(false);
+        expect(plugin.app.workspace.trigger).not.toHaveBeenCalled();
+        finish(response({ status: "updated", operation: "unstage-all" }));
+        await request;
+        await manager.status();
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(plugin.app.workspace.trigger).toHaveBeenCalledWith(
+            "obsidian-git:refresh"
+        );
+    });
+
+    it("enables queued GitActions staging flows and reports failed requests", async () => {
+        const { plugin } = setup();
+        const actions = new GitActions(plugin);
+        expect((await actions.stage("a.md", false)).status).toBe("success");
+        expect((await actions.stageAll("Notes")).status).toBe("success");
+        expect((await actions.unstage("a.md", false)).status).toBe("success");
+        expect((await actions.unstageAll()).status).toBe("success");
+        fetchMock.mockResolvedValueOnce(
+            response(
+                {
+                    error: {
+                        code: "GIT_INDEX_LOCKED",
+                        message: "Wait for Git to finish.",
+                    },
+                },
+                409
+            )
+        );
+        expect((await actions.unstageAll()).status).toBe("failed");
+        expect(plugin.displayError).toHaveBeenCalledWith(
+            expect.objectContaining({ code: "GIT_INDEX_LOCKED" })
+        );
+        expect(
+            plugin.app.workspace.trigger.mock.calls.filter(
+                ([event]) => event === "obsidian-git:refresh"
+            )
+        ).toHaveLength(5);
+        expect(plugin.state.operation).toBe(GitOperation.idle);
+    });
+
+    it("rejects malformed success responses and refreshes after ambiguous failure", async () => {
+        const { manager, plugin } = setup();
+        fetchMock.mockResolvedValueOnce(
+            response({ status: "updated", operation: "pull" })
+        );
+        await expect(manager.unstageAll({})).rejects.toMatchObject({
+            code: "INVALID_RESPONSE",
+        });
+        expect(plugin.app.workspace.trigger).toHaveBeenCalledWith(
+            "obsidian-git:refresh"
+        );
+    });
+
+    it("blocks reported pending writes while allowing index-only unstaging", async () => {
+        const { manager } = setup();
+        window.__ignis!.writes!.listPending = () => ["a.md"];
+        await expect(manager.stage("a.md", true)).rejects.toMatchObject({
+            code: "BROWSER_DIRTY",
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+        await manager.unstage("a.md", true);
+    });
+
+    it("explicitly announces persisted-content semantics before a staging request", async () => {
+        const { manager, plugin } = setup();
+        await manager.stageAll({});
+        expect(plugin.displayMessage).toHaveBeenCalledWith(
+            expect.stringContaining("Recent editor saves may not be included")
+        );
+    });
+
+    it("blocks editable panes, failed writes and missing safety APIs before staging", async () => {
+        const { manager, iterateAllLeaves } = setup();
+        const view = Object.assign(
+            Object.create(MarkdownView.prototype) as MarkdownView,
+            { getMode: () => "source" }
+        );
+        iterateAllLeaves.mockImplementation(
+            (callback: (leaf: { view: MarkdownView }) => void) =>
+                callback({ view })
+        );
+        await expect(manager.stageAll({})).rejects.toMatchObject({
+            code: "BROWSER_DIRTY",
+        });
+        iterateAllLeaves.mockReset();
+        window.__ignis!.writes!.listFailed = () => ["note.md"];
+        await expect(manager.stageAll({})).rejects.toMatchObject({
+            code: "BROWSER_DIRTY",
+        });
+        delete window.__ignis!.writes;
+        await expect(manager.stageAll({})).rejects.toMatchObject({
+            code: "BROWSER_STATE",
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("preserves dual staged/changed status after refreshing a mutation", async () => {
+        const { manager } = setup();
+        await manager.status();
+        await manager.unstage("other.md", false);
+        const file = {
+            path: "note.md",
+            vaultPath: "note.md",
+            index: "M",
+            workingDir: "M",
+        };
+        fetchMock.mockResolvedValueOnce(
+            response({
+                ...state,
+                status: {
+                    ...emptyStatus,
+                    all: [file],
+                    changed: [file],
+                    staged: [file],
+                },
+            })
+        );
+        const status = await manager.status();
+        expect(status.changed).toEqual([file]);
+        expect(status.staged).toEqual([file]);
+    });
+
+    it("keeps patch, discard and commit workflows blocked", async () => {
+        const { plugin } = setup();
+        const actions = new GitActions(plugin);
+        await actions.applyPatch("patch");
+        await actions.addFileToGitignore("a.md");
+        await actions.commit({ fromAuto: false });
+        await actions.runRawCommand("add .");
+        expect(plugin.displayError).toHaveBeenCalledTimes(4);
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 });

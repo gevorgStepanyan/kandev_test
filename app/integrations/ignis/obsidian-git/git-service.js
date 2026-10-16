@@ -137,6 +137,16 @@ class GitService {
                         403
                     );
                 else if (
+                    /index\.lock.*(?:exists|File exists)|Unable to create.*index\.lock/is.test(
+                        err
+                    )
+                )
+                    error = new GitServiceError(
+                        "GIT_INDEX_LOCKED",
+                        "Git's index is locked. Wait for other Git processes to finish; inspect stale locks outside Ignis.",
+                        409
+                    );
+                else if (
                     /permission denied|authentication failed|could not read username/i.test(
                         err
                     )
@@ -405,6 +415,176 @@ class GitService {
             stagedOutsideVault: 0,
             conflictedOutsideVault: 0,
         };
+    }
+
+    validateIndexPath(target) {
+        if (
+            typeof target !== "string" ||
+            !target ||
+            target.includes("\\") ||
+            target.includes("\0") ||
+            path.posix.isAbsolute(target) ||
+            /^[A-Za-z]:/.test(target) ||
+            target
+                .split("/")
+                .some(
+                    (part) =>
+                        !part ||
+                        part === "." ||
+                        part === ".." ||
+                        part.toLowerCase() === ".git"
+                )
+        )
+            throw new GitServiceError(
+                "INVALID_PATH",
+                "Choose a relative file or folder inside the vault, excluding Git metadata.",
+                400
+            );
+    }
+
+    async mutateIndex(vaultId, operation, target) {
+        return this.locked(vaultId, async (repo) => {
+            if (
+                !["stage", "unstage", "stage-all", "unstage-all"].includes(
+                    operation
+                )
+            )
+                throw new GitServiceError(
+                    "INVALID_REQUEST",
+                    "Unknown index operation.",
+                    400
+                );
+            const all = operation.endsWith("-all");
+            const staging = operation.startsWith("stage");
+            if (target !== undefined || !all) this.validateIndexPath(target);
+            if (
+                target === "git_conflict.md" ||
+                target?.startsWith("git_conflict.md/")
+            )
+                throw new GitServiceError(
+                    "INVALID_PATH",
+                    "The Pull conflict report is excluded from staging operations.",
+                    400
+                );
+            const matches = (file) =>
+                target === undefined ||
+                file === target ||
+                file.startsWith(target + "/");
+            const status = await this.status(repo);
+            if (status.conflicted.some(matches))
+                throw new GitServiceError(
+                    "UNMERGED_PATH",
+                    "Resolve unmerged index entries outside Ignis before staging or unstaging this scope.",
+                    409
+                );
+            const literal = (file) => `:(literal)${file}`;
+            if (target !== undefined) {
+                const known = (
+                    await this.run(repo, [
+                        "ls-files",
+                        "-z",
+                        "--cached",
+                        "--others",
+                        "--exclude-standard",
+                        "--",
+                        literal(target),
+                    ])
+                ).out;
+                const ignored = await this.run(
+                    repo,
+                    [
+                        "--literal-pathspecs",
+                        "check-ignore",
+                        "--quiet",
+                        "--",
+                        target,
+                    ],
+                    [0, 1]
+                );
+                if (
+                    !known &&
+                    !status.all.some(
+                        (file) =>
+                            matches(file.path) ||
+                            (file.from && matches(file.from))
+                    )
+                ) {
+                    if (ignored.code === 0)
+                        throw new GitServiceError(
+                            "IGNORED_PATH",
+                            "This path is ignored by Git. Review ignore rules outside Ignis before staging it.",
+                            400
+                        );
+                    let exists = false;
+                    try {
+                        exists = (
+                            await fs.lstat(path.join(repo, target))
+                        ).isDirectory();
+                    } catch (error) {
+                        if (error.code !== "ENOENT" && error.code !== "ENOTDIR")
+                            throw error;
+                    }
+                    if (!exists)
+                        throw new GitServiceError(
+                            "INVALID_PATH",
+                            "The selected path is not present in the working tree or Git index.",
+                            400
+                        );
+                }
+            }
+            const selected = (staging ? status.changed : status.staged).filter(
+                (file) =>
+                    (matches(file.path) ||
+                        (!staging && file.from && matches(file.from))) &&
+                    file.path !== "git_conflict.md"
+            );
+            if (selected.length) {
+                const specs = [target === undefined ? ":/" : literal(target)];
+                // A file row represents both sides of a staged rename. Folder
+                // actions stay strictly within their requested subtree.
+                if (!all && !staging) {
+                    for (const file of selected) {
+                        if (file.from) {
+                            this.validateIndexPath(file.from);
+                            if (file.from === "git_conflict.md")
+                                throw new GitServiceError(
+                                    "INVALID_PATH",
+                                    "The Pull conflict report is excluded from staging operations.",
+                                    400
+                                );
+                            specs.push(literal(file.from), literal(file.path));
+                        }
+                    }
+                }
+                specs.push(":(exclude,literal)git_conflict.md");
+                if (staging)
+                    await this.run(repo, ["add", "-A", "--", ...specs]);
+                else if (await this.head(repo))
+                    await this.run(repo, [
+                        "restore",
+                        "--staged",
+                        "--",
+                        ...specs,
+                    ]);
+                else
+                    await this.run(repo, [
+                        "rm",
+                        "--cached",
+                        "-r",
+                        "-f",
+                        "--ignore-unmatch",
+                        "--",
+                        ...specs,
+                    ]);
+            }
+            return {
+                status: "updated",
+                operation,
+                ...(target === undefined
+                    ? {}
+                    : { [all ? "dir" : "path"]: target }),
+            };
+        });
     }
 
     async unfinished(repo) {

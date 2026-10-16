@@ -905,16 +905,18 @@ export class GitActions {
         path: string,
         relativeToVault: boolean
     ): Promise<GitActionResult<FileStateMutationResult>> {
-        return this.runFileStateMutation(() =>
-            this.plugin.gitManager.stage(path, relativeToVault)
+        return this.runFileStateMutation(
+            () => this.plugin.gitManager.stage(path, relativeToVault),
+            true
         );
     }
 
     async stageAll(
         path?: string
     ): Promise<GitActionResult<FileStateMutationResult>> {
-        return this.runFileStateMutation(() =>
-            this.plugin.gitManager.stageAll({ dir: path })
+        return this.runFileStateMutation(
+            () => this.plugin.gitManager.stageAll({ dir: path }),
+            true
         );
     }
 
@@ -928,16 +930,18 @@ export class GitActions {
         path: string,
         relativeToVault: boolean
     ): Promise<GitActionResult<FileStateMutationResult>> {
-        return this.runFileStateMutation(() =>
-            this.plugin.gitManager.unstage(path, relativeToVault)
+        return this.runFileStateMutation(
+            () => this.plugin.gitManager.unstage(path, relativeToVault),
+            true
         );
     }
 
     async unstageAll(
         path?: string
     ): Promise<GitActionResult<FileStateMutationResult>> {
-        return this.runFileStateMutation(() =>
-            this.plugin.gitManager.unstageAll({ dir: path })
+        return this.runFileStateMutation(
+            () => this.plugin.gitManager.unstageAll({ dir: path }),
+            true
         );
     }
 
@@ -955,13 +959,15 @@ export class GitActions {
     }
 
     private async runFileStateMutation(
-        action: () => Promise<void>
+        action: () => Promise<void>,
+        ignisSupported = false
     ): Promise<GitActionResult<FileStateMutationResult>> {
         return this.runReadyGitAction<FileStateMutationResult>(async () => {
             await action();
-            this.plugin.app.workspace.trigger("obsidian-git:refresh");
+            if (!isIgnis())
+                this.plugin.app.workspace.trigger("obsidian-git:refresh");
             return { status: "updated" };
-        });
+        }, ignisSupported);
     }
 
     async setGitConfig(

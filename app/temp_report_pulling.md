@@ -2,34 +2,82 @@
 
 Work in this order:
 
+Checklist updated **2026-10-16**. Checked phases indicate implementation is
+present; they do not mean every review finding is resolved. The user has
+confirmed successful server API Pull and, after deploying the extended browser
+plugin, successful Pull in Ignis. See the current status below for remaining work.
+
 - [x] **Phase 1 — Investigation**
 
 Map the existing architecture and required interfaces.
 
-- [ ] **Phase 2 — Backend**
+- [x] **Phase 2 — Backend**
 
 Implement the Ignis server plugin, repository inspection endpoints, and safe pull operation.
-Once ready let me know to test it on my server.
+Implemented and tested on the user's server: discovery, per-vault enablement,
+and the Pull endpoint work. Review findings 3–5 remain open.
 
-- [ ] **Phase 3 — Browser manager**
+- [x] **Phase 3 — Browser manager**
 
 Implement runtime detection, `IgnisGitManager`, HTTP transport, and the required read-only methods.
 
-- [ ] **Phase 4 — Plugin integration**
+Implemented; the user reports Pull works after browser-plugin deployment.
+Review findings 1 and 5 remain open.
+
+- [x] **Phase 4 — Plugin integration**
 
 Make the existing Pull command functional.
 
 Ensure initialization, status, error reporting, and filesystem refresh work.
 
-- [ ] **Phase 5 — Unsupported-feature handling**
+The basic Pull flow is confirmed by the user. Review findings 2, 4, and 6
+remain open; failure paths, unload/reload, and detailed note-refresh behavior
+still need validation.
+
+- [x] **Phase 5 — Unsupported-feature handling**
 
 Intercept unsupported commands, disable unsupported automatic routines, and remove accidental native process execution paths.
+
+Guards are implemented. Review finding 7 remains open; exhaustive command/UI
+coverage and native-import compatibility beyond the working Pull path remain
+unverified.
 
 - [ ] **Phase 6 — Testing and documentation**
 
 Run checks, resolve failures, document deployment, and verify that normal Obsidian platforms have not regressed.
 
 Complete all feasible phases rather than stopping after the investigation.
+
+## Current status — 2026-10-16
+
+- [x] Server integration installed in Ignis's code discovery directory, separate
+  from `/app/data`; `/api/plugins` lists `obsidian-git`.
+- [x] Server plugin enabled for the active vault; the direct API Pull test works
+  (user confirmation).
+- [x] Extended browser plugin deployed; Pull works in Ignis (user confirmation).
+- [x] Deployment instructions and automated test implementations are present in
+  `docs/ignis-integration.md`, `integrations/ignis/obsidian-git/README.md`, and
+  the Ignis test/smoke files.
+- [ ] Resolve review finding 1: browser write completion and mutation races.
+- [ ] Resolve review finding 2: safe cleanup when editor setup was skipped.
+- [ ] Resolve review finding 3: conflict/untracked status mapping.
+- [ ] Resolve review finding 4: skipped/failed cache reconciliation reporting.
+- [ ] Resolve review finding 5: server/browser filename compatibility.
+- [ ] Resolve review finding 6: clear UI loading on refresh failures.
+- [ ] Resolve review finding 7: Ignis-specific conflict guidance.
+- [ ] Run and record the full project checks and production bundle smoke check
+  against the final implementation; verify desktop/mobile regression coverage.
+- [ ] Complete the remaining scenario coverage and live checks listed below,
+  including blocked/error cases, unload/reload, and note visibility after Pull.
+
+This update reviewed the current source and recorded the user's live test
+results. It did not run automated checks or independently access the deployed
+server. Successful Pull confirms the basic deployed path; it does not resolve
+the seven findings below. Phase 6 remains incomplete.
+
+The following dated review is preserved as historical evidence. Its phase
+assessments and statements about missing live verification describe the
+2026-10-14 review, not the updated checklist above.
 
 ## Static review of the pilot implementation — 2026-10-14
 

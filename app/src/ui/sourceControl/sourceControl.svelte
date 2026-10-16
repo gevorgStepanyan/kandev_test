@@ -101,6 +101,11 @@
                 }
             )
         );
+        view.registerEvent(
+            view.app.workspace.on("obsidian-git:refreshed", () => {
+                if (isIgnis()) loading = false;
+            })
+        );
         const modifyEvent = view.app.vault.on("modify", (file) => {
             if (!status?.conflicted) {
                 return;
@@ -412,23 +417,25 @@
     }
 
     function stageAll(event: MouseEvent) {
-        if (isIgnis()) {
-            plugin.displayIgnisFutureFeature();
-            return;
-        }
         event.stopPropagation();
         loading = true;
-        plugin.promiseQueue.addTask(() => plugin.gitActions.stageAll());
+        plugin.promiseQueue.addTask(
+            () => plugin.gitActions.stageAll(),
+            () => {
+                loading = false;
+            }
+        );
     }
 
     function unstageAll(event: MouseEvent) {
-        if (isIgnis()) {
-            plugin.displayIgnisFutureFeature();
-            return;
-        }
         event.stopPropagation();
         loading = true;
-        plugin.promiseQueue.addTask(() => plugin.gitActions.unstageAll());
+        plugin.promiseQueue.addTask(
+            () => plugin.gitActions.unstageAll(),
+            () => {
+                loading = false;
+            }
+        );
     }
 
     function push() {
@@ -468,9 +475,9 @@
 >
     {#if isIgnis()}
         <p>
-            Ignis pilot: Pull and repository status are available. Commit, Push,
-            staging, history and diff tools are planned. Automatic Pull runs
-            only while this browser is active.
+            Ignis: Pull, staging, unstaging and repository status are available.
+            Commit, Push, history and diff tools are planned. Automatic Pull
+            runs only while this browser is active.
         </p>
     {/if}
     {#if repositoryMissing}
