@@ -54,3 +54,6 @@ Why this matters (especially with AI coding assistants):
 
 - Connect to the container with: `docker exec -it <CONTAINER_NAME> /bin/bash`. You can find the `<CONTAINER_NAME>` by running `docker ps` in a terminal.
   - To connect as the `root` user, add `-u root` to the command above.
+
+- Restart the container: `docker compose restart <service>`
+  If the `<service>` is ommitted, it will restart all services.

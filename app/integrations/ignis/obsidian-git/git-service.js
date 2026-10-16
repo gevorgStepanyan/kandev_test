@@ -129,6 +129,11 @@ class GitService {
                 }
                 const err = Buffer.concat(stderr).toString("utf8");
                 if (allowed.includes(code)) return resolve({ code, out });
+                console.error("[obsidian-git] Git command failed", {
+                    args,
+                    exitCode: code,
+                    stderr: err.slice(0, 4000),
+                });
                 let error;
                 if (/dubious ownership/i.test(err))
                     error = new GitServiceError(
