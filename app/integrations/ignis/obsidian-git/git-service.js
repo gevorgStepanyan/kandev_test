@@ -561,9 +561,10 @@ class GitService {
                     }
                 }
                 specs.push(":(exclude,literal)git_conflict.md");
-                if (staging)
-                    await this.run(repo, ["add", "-A", "--", ...specs]);
-                else if (await this.head(repo))
+                if (staging) {
+                    const paths = selected.map((file) => `:(literal)${file.path}`);
+                    await this.run(repo, ["add", "-A", "--", ...paths]);
+                } else if (await this.head(repo))
                     await this.run(repo, [
                         "restore",
                         "--staged",
