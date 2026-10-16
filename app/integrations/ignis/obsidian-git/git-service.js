@@ -498,7 +498,6 @@ class GitService {
                 const ignored = await this.run(
                     repo,
                     [
-                        "--literal-pathspecs",
                         "check-ignore",
                         "--quiet",
                         "--",
