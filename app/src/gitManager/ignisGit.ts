@@ -1,4 +1,4 @@
-import { MarkdownView } from "obsidian";
+import { MarkdownView, moment } from "obsidian";
 import { GitManager } from "./gitManager";
 import {
     fileEntries,
@@ -6,6 +6,8 @@ import {
     record,
     repositoryState,
     type IgnisRepositoryState,
+    type IgnisMutationPayload,
+    type IgnisCommitRequest,
 } from "./ignisGitClient";
 import {
     IgnisGitError,
@@ -16,6 +18,7 @@ import {
     type BranchInfo,
     type PullResult,
     type Status,
+    type UnstagedFile,
 } from "src/types";
 
 export class IgnisGitManager extends GitManager {
@@ -27,7 +30,7 @@ export class IgnisGitManager extends GitManager {
     private async request(
         endpoint: string,
         post = false,
-        payload: { path?: string; dir?: string } = {}
+        payload: IgnisMutationPayload = {}
     ): Promise<unknown> {
         if (this.unloaded)
             throw new IgnisGitError(
@@ -213,11 +216,171 @@ export class IgnisGitManager extends GitManager {
     private unsupported(): never {
         throw new IgnisUnsupportedGitFeatureError();
     }
-    commitAll(): Promise<number> {
-        return this.unsupported();
+    commitNoopReason: "nothing-staged" | "no-changes" = "no-changes";
+
+    commitAll(options: {
+        message: string;
+        status?: Status;
+        unstagedFiles?: UnstagedFile[];
+        amend?: boolean;
+    }): Promise<number> {
+        return this.performCommit("all", options);
     }
-    commit(): Promise<number> {
-        return this.unsupported();
+    commit(options: { message: string; amend?: boolean }): Promise<number> {
+        return this.performCommit("staged", options);
+    }
+    commitSmart(options: { message: string }): Promise<number> {
+        return this.performCommit("smart", options);
+    }
+
+    private async performCommit(
+        mode: IgnisCommitRequest["mode"],
+        options: { message: string; amend?: boolean }
+    ): Promise<number> {
+        return this.withGitOperation(GitOperation.commit, async () => {
+            if (options.amend)
+                throw new IgnisGitError(
+                    "AMEND_UNSUPPORTED",
+                    "Amend is unavailable in Ignis because publication state cannot be established reliably."
+                );
+            if (
+                mode === "all" ||
+                (mode === "smart" && this.plugin.settings.autoStageOnEmptyIndex)
+            )
+                this.ensureStagingSafe();
+            this.pendingState = undefined;
+            try {
+                const snapshot = await this.status();
+                const onlyStaged =
+                    mode === "staged" ||
+                    (mode === "smart" &&
+                        (snapshot.staged.length > 0 ||
+                            !this.plugin.settings.autoStageOnEmptyIndex));
+                const intended = onlyStaged
+                    ? snapshot.staged
+                    : [
+                          ...new Map(
+                              [
+                                  ...snapshot.staged,
+                                  ...snapshot.changed.map((file) => ({
+                                      ...file,
+                                      index:
+                                          file.workingDir === "?"
+                                              ? "A"
+                                              : file.workingDir,
+                                  })),
+                              ].map((file) => [file.path, file])
+                          ).values(),
+                      ];
+                const message = await this.formatCommitMessage(
+                    options.message,
+                    {
+                        staged: intended.filter(
+                            (file) => file.path !== "git_conflict.md"
+                        ),
+                        stagedOutsideVault: 0,
+                    }
+                );
+                if (
+                    !message.trim() ||
+                    message.includes("\0") ||
+                    new TextEncoder().encode(message).length > 16 * 1024
+                )
+                    throw new IgnisGitError(
+                        "INVALID_COMMIT_MESSAGE",
+                        "Enter a nonempty commit message of at most 16 KiB UTF-8, without NUL characters."
+                    );
+                if (this.plugin.settings.commitMessageScript)
+                    this.plugin.displayMessage(
+                        "Commit message scripts are unsupported in Ignis. Using the message template instead."
+                    );
+                const value = await this.request("commit", true, {
+                    mode,
+                    message,
+                    amend: false,
+                    ...(mode === "smart"
+                        ? {
+                              autoStageOnEmptyIndex:
+                                  !!this.plugin.settings.autoStageOnEmptyIndex,
+                          }
+                        : {}),
+                });
+                if (
+                    record(value) &&
+                    value.status === "nothing-to-commit" &&
+                    (value.reason === "nothing-staged" ||
+                        value.reason === "no-changes")
+                ) {
+                    this.commitNoopReason = value.reason;
+                    return 0;
+                }
+                if (
+                    !record(value) ||
+                    value.status !== "committed" ||
+                    !record(value.commit) ||
+                    typeof value.commit.hash !== "string" ||
+                    !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(
+                        value.commit.hash
+                    ) ||
+                    !Number.isSafeInteger(value.commit.files) ||
+                    (value.commit.files as number) <= 0 ||
+                    typeof value.commit.branch !== "string" ||
+                    !value.commit.branch
+                )
+                    throw new IgnisGitError(
+                        "INVALID_RESPONSE",
+                        "Invalid Ignis commit result. Inspect history before retrying; a commit may already exist."
+                    );
+                this.pendingState = undefined;
+                this.app.workspace.trigger("obsidian-git:head-change");
+                return value.commit.files as number;
+            } finally {
+                this.pendingState = undefined;
+                this.app.workspace.trigger("obsidian-git:refresh");
+            }
+        });
+    }
+
+    override async formatCommitMessage(
+        template: string,
+        scope?: Pick<Status, "staged" | "stagedOutsideVault">
+    ): Promise<string> {
+        const status = scope ?? (await this.getStagedForMessage());
+        const files = status.staged;
+        const groups = new Map<string, string[]>();
+        for (const file of files) {
+            const action =
+                file.index === "?" || file.index === " "
+                    ? file.workingDir
+                    : file.index;
+            groups.set(action, [...(groups.get(action) ?? []), file.path]);
+        }
+        const replacements: Record<string, string> = {
+            date: moment().format(this.plugin.settings.commitDateFormat),
+            hostname: this.plugin.localStorage.getHostname() || "",
+            numFiles: String(files.length),
+            files:
+                files.length < 100
+                    ? [...groups]
+                          .map(
+                              ([action, paths]) =>
+                                  action + " " + paths.join(" ")
+                          )
+                          .join(", ")
+                    : "Too many files to list",
+        };
+        // One pass prevents tokens introduced by filenames/hostname from expanding.
+        let message = template.replace(
+            /\{\{(date|hostname|numFiles|files)\}\}/g,
+            (_, key: string) => replacements[key]!
+        );
+        if (this.plugin.settings.listChangedFilesInMessageBody)
+            message +=
+                "\n\nAffected files:\n" +
+                (files.length < 100
+                    ? files.map((file) => file.path).join("\n")
+                    : "Too many files to list");
+        return message;
     }
     private async mutateIndex(
         operation: "stage" | "unstage" | "stage-all" | "unstage-all",

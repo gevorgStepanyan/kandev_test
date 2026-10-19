@@ -28,6 +28,7 @@
 
     let { plugin, view }: Props = $props();
     let loading: boolean = $state(false);
+    let committing = $state(false);
     let repositoryMissing = $state(false);
     let setupInProgress = $state(false);
     let mergeInProgress = $state(false);
@@ -157,7 +158,9 @@
     });
 
     function getCommitActionDescription(sync: boolean): string {
-        if (isIgnis()) return IGNIS_FUTURE_FEATURE_NOTICE;
+        if (isIgnis() && sync) return IGNIS_FUTURE_FEATURE_NOTICE;
+        if (isIgnis() && mergeInProgress)
+            return "Finish or abort the in-progress Git operation outside Ignis before committing";
         const suffix = sync ? " and sync" : "";
         if (hasConflicts) {
             return "Resolve conflicts before committing";
@@ -183,7 +186,8 @@
     }
 
     function canCommit(mode: CommitMode): boolean {
-        if (isIgnis()) return true;
+        if (isIgnis() && (loading || committing || mergeInProgress))
+            return false;
         if (hasConflicts) return false;
         if (mode === "staged") return stagedCount > 0;
         if (mode === "all") return hasChanges;
@@ -201,25 +205,34 @@
     }
 
     function commit(mode: CommitMode = "smart") {
-        if (isIgnis()) {
-            plugin.displayIgnisFutureFeature();
-            return;
-        }
         if (!canCommit(mode)) return;
-        loading = true;
         if (status) {
+            loading = true;
+            committing = true;
             plugin.promiseQueue.addTask(() =>
                 plugin.gitActions
                     .commit({ fromAuto: false, commitMessage, mode })
-                    .then(() => (commitMessage = plugin.settings.commitMessage))
-                    .finally(triggerRefresh)
+                    .then((result) => {
+                        if (
+                            result.status === "success" &&
+                            result.value.status === "committed"
+                        )
+                            commitMessage = plugin.settings.commitMessage;
+                    })
+                    .finally(() => {
+                        committing = false;
+                        loading = false;
+                        triggerRefresh();
+                    })
             );
         }
     }
 
     function amendStaged() {
         if (isIgnis()) {
-            plugin.displayIgnisFutureFeature();
+            plugin.displayMessage(
+                "Amend is unavailable in Ignis because publication state cannot be established reliably."
+            );
             return;
         }
         if (!canCommit("staged")) return;
@@ -261,10 +274,6 @@
     }
 
     function showCommitMenu(event: MouseEvent) {
-        if (isIgnis()) {
-            plugin.displayIgnisFutureFeature();
-            return;
-        }
         event.stopPropagation();
         const menu = Menu.forEvent(event);
         menu.addItem((item) =>
@@ -475,9 +484,9 @@
 >
     {#if isIgnis()}
         <p>
-            Ignis: Pull, staging, unstaging and repository status are available.
-            Commit, Push, history and diff tools are planned. Automatic Pull
-            runs only while this browser is active.
+            Ignis: Pull, staging, unstaging, manual Commit and repository status
+            are available. Push, history and diff tools are planned. Automatic
+            Pull runs only while this browser is active.
         </p>
     {/if}
     {#if repositoryMissing}

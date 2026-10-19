@@ -42,6 +42,13 @@ export function commandForRuntime(
         !isIgnis() ||
         [
             "pull",
+            "commit",
+            "commit-specified-message",
+            "commit-smart",
+            "commit-smart-specified-message",
+            "commit-staged",
+            "commit-staged-specified-message",
+            "commit-amend-staged-specified-message",
             "stage-current-file",
             "unstage-current-file",
             "open-git-view",

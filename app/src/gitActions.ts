@@ -9,6 +9,7 @@ import * as fsPromises from "fs/promises";
 import { CustomMessageModal } from "src/ui/modals/customMessageModal";
 import { IsomorphicGit } from "./gitManager/isomorphicGit";
 import { SimpleGit } from "./gitManager/simpleGit";
+import { IgnisGitManager } from "./gitManager/ignisGit";
 import type {
     CommitAndSyncResult,
     CommitMode,
@@ -505,8 +506,9 @@ export class GitActions {
     async commit(
         options: CommitOptions
     ): Promise<GitActionResult<CommitResult>> {
-        const actionResult = await this.runReadyGitAction<CommitResult>(() =>
-            this.performCommit(options)
+        const actionResult = await this.runReadyGitAction<CommitResult>(
+            () => this.performCommit(options),
+            !options.fromAuto
         );
         if (actionResult.status === "success") {
             this.reportCommitResult(actionResult.value);
@@ -521,6 +523,17 @@ export class GitActions {
         commitMessage,
         amend = false,
     }: CommitOptions): Promise<CommitResult> {
+        const ignisManager =
+            this.plugin.gitManager instanceof IgnisGitManager
+                ? this.plugin.gitManager
+                : undefined;
+        if (isIgnis() && (fromAuto || amend))
+            throw new IgnisGitError(
+                amend ? "AMEND_UNSUPPORTED" : "AUTOMATIC_COMMIT_UNSUPPORTED",
+                amend
+                    ? "Amend is unavailable in Ignis because publication state cannot be established reliably."
+                    : "Automatic commits are unavailable in Ignis. Use a manual Commit action."
+            );
         const status = await this.plugin.updateCachedStatus();
         const mergeInProgress = this.plugin.state.mergeInProgress;
         // Reuse the fresh status instead of walking the working tree again.
@@ -551,7 +564,7 @@ export class GitActions {
             resolvedMode = "staged";
         }
 
-        if (resolvedMode === "nothing") {
+        if (resolvedMode === "nothing" && !ignisManager) {
             return {
                 status: "nothing-to-commit",
                 reason: "nothing-staged",
@@ -561,9 +574,10 @@ export class GitActions {
         const onlyStaged = resolvedMode === "staged";
 
         if (
-            await this.plugin.tools.hasTooBigFiles(
+            !ignisManager &&
+            (await this.plugin.tools.hasTooBigFiles(
                 onlyStaged ? stagedFiles : [...stagedFiles, ...unstagedFiles]
-            )
+            ))
         ) {
             return { status: "skipped", reason: "files-too-large" };
         }
@@ -573,7 +587,7 @@ export class GitActions {
                 stagedFiles.length +
                 status.stagedOutsideVault !==
             0;
-        if (changesCountToCommit || mergeInProgress) {
+        if (changesCountToCommit || mergeInProgress || ignisManager) {
             // The commit message from settings or previously set in the
             // source control view
             let cmtMessage =
@@ -589,6 +603,7 @@ export class GitActions {
             // On desktop may run a script to get the commit message
             if (
                 !requestMessage &&
+                !isIgnis() &&
                 this.plugin.gitManager instanceof SimpleGit &&
                 this.plugin.settings.commitMessageScript
             ) {
@@ -596,7 +611,12 @@ export class GitActions {
             }
 
             // An empty manual template means the user should enter a message.
-            if (requestMessage || (!fromAuto && !cmtMessage?.trim())) {
+            if (
+                requestMessage ||
+                (!fromAuto &&
+                    !cmtMessage?.trim() &&
+                    (!ignisManager || commitMessage === undefined))
+            ) {
                 if (!this.plugin.settings.disablePopups && fromAuto) {
                     new Notice(
                         "Auto backup: Please enter a custom commit message. Leave empty to abort"
@@ -619,11 +639,20 @@ export class GitActions {
 
             // Check if commit message is empty after all processing
             if (!cmtMessage || cmtMessage.trim() === "") {
+                if (ignisManager)
+                    throw new IgnisGitError(
+                        "INVALID_COMMIT_MESSAGE",
+                        "Enter a nonempty commit message."
+                    );
                 throw new Errors.UserCanceledError();
             }
 
             let committedFiles: number;
-            if (onlyStaged) {
+            if (ignisManager && mode === "smart") {
+                committedFiles = await ignisManager.commitSmart({
+                    message: cmtMessage,
+                });
+            } else if (onlyStaged || (ignisManager && mode === "staged")) {
                 committedFiles = await this.plugin.gitManager.commit({
                     message: cmtMessage,
                     amend,
@@ -643,13 +672,13 @@ export class GitActions {
             }
 
             this.plugin.app.workspace.trigger("obsidian-git:refresh");
-            if (committedFiles === 0 && !mergeInProgress) {
+            if (committedFiles === 0 && (!mergeInProgress || ignisManager)) {
                 // simple-git resolves with { changes: 0 } instead of
                 // throwing when there is nothing to commit (e.g. the
                 // detected change was already committed by a previous run).
                 return {
                     status: "nothing-to-commit",
-                    reason: "no-changes",
+                    reason: ignisManager?.commitNoopReason ?? "no-changes",
                 };
             }
             return { status: "committed", files: committedFiles };

@@ -11,6 +11,16 @@ export interface IgnisRepositoryState {
     remotes: Record<string, string | undefined>;
 }
 
+export type IgnisCommitRequest = {
+    mode: "staged" | "all" | "smart";
+    message: string;
+    amend: boolean;
+    autoStageOnEmptyIndex?: boolean;
+};
+
+export type IgnisMutationPayload =
+    { path?: string; dir?: string } | IgnisCommitRequest;
+
 export function record(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -95,7 +105,7 @@ export async function ignisRequest(
     vaultId: string,
     signal: AbortSignal,
     post = false,
-    payload: { path?: string; dir?: string } = {}
+    payload: IgnisMutationPayload = {}
 ): Promise<unknown> {
     let response: Response;
     try {

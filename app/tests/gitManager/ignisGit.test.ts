@@ -8,6 +8,15 @@ import {
 import { GitOperation } from "src/types";
 import { createFakePlugin } from "../helpers/createFakePlugin";
 import { GitActions } from "src/gitActions";
+import { CustomMessageModal } from "src/ui/modals/customMessageModal";
+
+vi.mock("src/ui/modals/customMessageModal", () => ({
+    CustomMessageModal: class {
+        openAndGetResult(): Promise<string | undefined> {
+            return Promise.resolve(undefined);
+        }
+    },
+}));
 
 const emptyStatus = {
     all: [],
@@ -28,6 +37,8 @@ const state = {
 };
 const response = (value: unknown, status = 200) =>
     new Response(JSON.stringify(value), { status });
+const asyncResponse = (value: unknown, status = 200) =>
+    Promise.resolve(response(value, status));
 function setup() {
     const plugin = createFakePlugin();
     const iterateAllLeaves = vi.fn();
@@ -58,6 +69,7 @@ beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
 });
 afterEach(() => {
+    vi.restoreAllMocks();
     delete window.__ignis;
     delete window.__currentVaultId;
     vi.unstubAllGlobals();
@@ -230,7 +242,6 @@ describe("IgnisGitManager", () => {
     it("blocks unsupported backend methods without sending a request", () => {
         const { manager } = setup();
         for (const action of [
-            () => manager.commit(),
             () => manager.push(),
             () => manager.discardAll(),
             () => manager.init(),
@@ -284,10 +295,16 @@ describe("IgnisGitManager", () => {
 
 describe("Ignis staging", () => {
     beforeEach(() => {
-        fetchMock.mockImplementation(async (url, options) => {
-            if (options?.method !== "POST") return response(state);
-            const operation = String(url).split("/").pop();
-            return response({ status: "updated", operation });
+        fetchMock.mockImplementation((url, options) => {
+            if (options?.method !== "POST") return asyncResponse(state);
+            const address =
+                typeof url === "string"
+                    ? url
+                    : url instanceof URL
+                      ? url.href
+                      : url.url;
+            const operation = address.split("/").pop();
+            return asyncResponse({ status: "updated", operation });
         });
     });
 
@@ -328,7 +345,7 @@ describe("Ignis staging", () => {
         expect(
             calls.map(([url, options]) => [
                 url,
-                JSON.parse(options!.body as string),
+                JSON.parse(options!.body as string) as unknown,
             ])
         ).toEqual([
             ["/api/ext/obsidian-git/stage-all", { vaultId: "Main & Work" }],
@@ -491,14 +508,385 @@ describe("Ignis staging", () => {
         expect(status.staged).toEqual([file]);
     });
 
-    it("keeps patch, discard and commit workflows blocked", async () => {
+    it("keeps patch, discard and automatic commit workflows blocked", async () => {
         const { plugin } = setup();
         const actions = new GitActions(plugin);
         await actions.applyPatch("patch");
         await actions.addFileToGitignore("a.md");
-        await actions.commit({ fromAuto: false });
+        await actions.commit({ fromAuto: true });
         await actions.runRawCommand("add .");
         expect(plugin.displayError).toHaveBeenCalledTimes(4);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+});
+
+describe("Ignis manual commits", () => {
+    const file = {
+        path: "note.md",
+        vaultPath: "note.md",
+        index: "M",
+        workingDir: "M",
+    };
+    const committed = {
+        status: "committed",
+        commit: {
+            hash: "a".repeat(40),
+            shortHash: "a".repeat(12),
+            files: 2,
+            branch: "main",
+        },
+    };
+    function commitSetup(staged = true, changed = true) {
+        const ctx = setup();
+        Object.assign(ctx.plugin.settings, {
+            commitMessage: "vault update",
+            autoCommitMessage: "automatic",
+            autoStageOnEmptyIndex: true,
+            commitDateFormat: "YYYY-MM-DD",
+            commitMessageScript: "",
+            listChangedFilesInMessageBody: false,
+        });
+        Object.assign(ctx.plugin.localStorage, {
+            getHostname: () => "browser",
+        });
+        Object.assign(ctx.plugin, {
+            updateCachedStatus: vi.fn(() => ctx.manager.status()),
+        });
+        fetchMock.mockImplementation((_url, options) =>
+            asyncResponse(
+                options?.method === "POST"
+                    ? committed
+                    : {
+                          ...state,
+                          status: {
+                              ...emptyStatus,
+                              all: [file],
+                              staged: staged ? [file] : [],
+                              changed: changed ? [file] : [],
+                          },
+                      }
+            )
+        );
+        return { ...ctx, actions: new GitActions(ctx.plugin) };
+    }
+    const posts = () =>
+        fetchMock.mock.calls.filter(
+            ([, options]) => options?.method === "POST"
+        );
+
+    it("sends a staged-only request and preserves multiline Unicode and leading hyphens", async () => {
+        const { manager, plugin } = commitSetup();
+        const message = "-- 雪 'quotes'\n\nbody punctuation: $() `literal`\n";
+        expect(await manager.commit({ message })).toBe(2);
+        expect(posts()).toHaveLength(1);
+        expect(posts()[0]).toEqual([
+            "/api/ext/obsidian-git/commit",
+            expect.objectContaining({
+                credentials: "same-origin",
+                body: JSON.stringify({
+                    vaultId: "Main & Work",
+                    mode: "staged",
+                    message,
+                    amend: false,
+                }),
+            }),
+        ]);
+        expect(plugin.app.workspace.trigger).toHaveBeenCalledWith(
+            "obsidian-git:head-change"
+        );
+        expect(plugin.app.workspace.trigger).toHaveBeenCalledWith(
+            "obsidian-git:refresh"
+        );
+        expect(plugin.setPluginState).toHaveBeenLastCalledWith({
+            operation: GitOperation.idle,
+        });
+    });
+
+    it("commits all in one request, ignoring caller-supplied status and file lists", async () => {
+        const { manager } = commitSetup();
+        const stage = vi.spyOn(manager, "stageAll");
+        expect(
+            await manager.commitAll({
+                message: "all",
+                status: emptyStatus,
+                unstagedFiles: [],
+            })
+        ).toBe(2);
+        expect(stage).not.toHaveBeenCalled();
+        expect(posts()).toHaveLength(1);
+        expect(JSON.parse(posts()[0]![1]!.body as string)).toEqual({
+            vaultId: "Main & Work",
+            mode: "all",
+            message: "all",
+            amend: false,
+        });
+    });
+
+    it.each([
+        [true, true],
+        [false, true],
+        [false, false],
+    ])(
+        "delegates smart selection to the locked server (staged=%s, fallback=%s)",
+        async (staged, fallback) => {
+            const { plugin, actions } = commitSetup(staged);
+            plugin.settings.autoStageOnEmptyIndex = fallback;
+            const result = await actions.commit({
+                fromAuto: false,
+                mode: "smart",
+                commitMessage: "smart",
+            });
+            expect(result).toEqual({
+                status: "success",
+                value: { status: "committed", files: 2 },
+            });
+            expect(JSON.parse(posts()[0]![1]!.body as string)).toEqual({
+                vaultId: "Main & Work",
+                mode: "smart",
+                message: "smart",
+                amend: false,
+                autoStageOnEmptyIndex: fallback,
+            });
+        }
+    );
+
+    it("does not suppress a request because cached browser status says nothing staged", async () => {
+        const { actions } = commitSetup(false, false);
+        expect(
+            (await actions.commit({ fromAuto: false, mode: "staged" })).status
+        ).toBe("success");
+        expect(
+            (JSON.parse(posts()[0]![1]!.body as string) as { mode: string })
+                .mode
+        ).toBe("staged");
+    });
+
+    it("uses the existing custom-message modal once and cancels without a mutation", async () => {
+        const { actions } = commitSetup();
+        const modal = vi
+            .spyOn(CustomMessageModal.prototype, "openAndGetResult")
+            .mockResolvedValueOnce("-- 雪\n\nmodal body")
+            .mockResolvedValueOnce(undefined);
+        expect(
+            (
+                await actions.commit({
+                    fromAuto: false,
+                    mode: "staged",
+                    requestCustomMessage: true,
+                })
+            ).status
+        ).toBe("success");
+        expect(posts()).toHaveLength(1);
+        expect(
+            (JSON.parse(posts()[0]![1]!.body as string) as { message: string })
+                .message
+        ).toBe("-- 雪\n\nmodal body");
+        expect(
+            (
+                await actions.commit({
+                    fromAuto: false,
+                    mode: "staged",
+                    requestCustomMessage: true,
+                })
+            ).status
+        ).toBe("cancelled");
+        expect(modal).toHaveBeenCalledTimes(2);
+        expect(posts()).toHaveLength(1);
+    });
+
+    it("maps a server no-op to no commit, without a HEAD event or success notice", async () => {
+        const { manager, actions, plugin } = commitSetup();
+        const request = vi.spyOn(manager, "formatCommitMessage");
+        fetchMock.mockImplementation((_url, options) =>
+            asyncResponse(
+                options?.method === "POST"
+                    ? { status: "nothing-to-commit", reason: "nothing-staged" }
+                    : state
+            )
+        );
+        expect(
+            await actions.commit({ fromAuto: false, mode: "smart" })
+        ).toEqual({
+            status: "success",
+            value: { status: "nothing-to-commit", reason: "nothing-staged" },
+        });
+        expect(request).toHaveBeenCalledOnce();
+        expect(plugin.app.workspace.trigger).not.toHaveBeenCalledWith(
+            "obsidian-git:head-change"
+        );
+        expect(plugin.displayMessage).not.toHaveBeenCalledWith(
+            expect.stringMatching(/^Committed/)
+        );
+    });
+
+    it("formats the intended scope exactly once without recursively expanding introduced tokens", async () => {
+        const { manager, plugin } = commitSetup();
+        plugin.settings.listChangedFilesInMessageBody = true;
+        Object.assign(plugin.localStorage, {
+            getHostname: () => "{{numFiles}}",
+        });
+        const other = {
+            ...file,
+            path: "{{hostname}}.md",
+            vaultPath: "{{hostname}}.md",
+            index: "?",
+            workingDir: "?",
+        };
+        fetchMock.mockImplementation((_url, options) =>
+            asyncResponse(
+                options?.method === "POST"
+                    ? committed
+                    : {
+                          ...state,
+                          status: {
+                              ...emptyStatus,
+                              all: [file, other],
+                              staged: [file],
+                              changed: [file, other],
+                          },
+                      }
+            )
+        );
+        const format = vi.spyOn(manager, "formatCommitMessage");
+        await manager.commitAll({
+            message: "{{numFiles}} {{hostname}} {{files}}",
+        });
+        expect(format).toHaveBeenCalledOnce();
+        const body = JSON.parse(posts()[0]![1]!.body as string) as {
+            message: string;
+        };
+        expect(body.message).toBe(
+            "2 {{numFiles}} M note.md, A {{hostname}}.md\n\nAffected files:\nnote.md\n{{hostname}}.md"
+        );
+    });
+
+    it("staged templates exclude unselected working changes", async () => {
+        const { manager } = commitSetup();
+        const other = {
+            ...file,
+            path: "other.md",
+            vaultPath: "other.md",
+            index: " ",
+            workingDir: "M",
+        };
+        fetchMock.mockImplementation((_url, options) =>
+            asyncResponse(
+                options?.method === "POST"
+                    ? committed
+                    : {
+                          ...state,
+                          status: {
+                              ...emptyStatus,
+                              all: [file, other],
+                              staged: [file],
+                              changed: [file, other],
+                          },
+                      }
+            )
+        );
+        await manager.commit({ message: "{{numFiles}} {{files}}" });
+        expect(
+            (JSON.parse(posts()[0]![1]!.body as string) as { message: string })
+                .message
+        ).toBe("1 M note.md");
+    });
+
+    it.each([
+        { ...committed, commit: { ...committed.commit, files: 0 } },
+        { ...committed, commit: { ...committed.commit, hash: "invalid" } },
+        { status: "updated" },
+    ])(
+        "rejects malformed commit success without a HEAD event",
+        async (result) => {
+            const { manager, plugin } = commitSetup();
+            fetchMock.mockImplementation((_url, options) =>
+                asyncResponse(options?.method === "POST" ? result : state)
+            );
+            await expect(
+                manager.commit({ message: "message" })
+            ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+            expect(plugin.app.workspace.trigger).not.toHaveBeenCalledWith(
+                "obsidian-git:head-change"
+            );
+            expect(plugin.setPluginState).toHaveBeenLastCalledWith({
+                operation: GitOperation.idle,
+            });
+        }
+    );
+
+    it("rejects invalid messages before mutation and scripts use the template path", async () => {
+        const { manager, plugin } = commitSetup();
+        for (const message of [" \n", "a\0b", "雪".repeat(6000)])
+            await expect(manager.commit({ message })).rejects.toMatchObject({
+                code: "INVALID_COMMIT_MESSAGE",
+            });
+        expect(posts()).toHaveLength(0);
+        plugin.settings.commitMessageScript = "must never execute";
+        await manager.commit({ message: "template" });
+        expect(plugin.displayMessage).toHaveBeenCalledWith(
+            expect.stringContaining("scripts are unsupported")
+        );
+        expect(posts()).toHaveLength(1);
+    });
+
+    it("invalidates cached status after success and errors, restoring idle without a HEAD event on error", async () => {
+        const { manager, plugin } = commitSetup();
+        await manager.status();
+        fetchMock.mockImplementation((_url, options) =>
+            asyncResponse(
+                options?.method === "POST"
+                    ? {
+                          error: {
+                              code: "GIT_COMMIT_FAILED",
+                              message: "Changes may remain staged.",
+                          },
+                      }
+                    : state,
+                options?.method === "POST" ? 409 : 200
+            )
+        );
+        await expect(
+            manager.commitAll({ message: "try" })
+        ).rejects.toMatchObject({ code: "GIT_COMMIT_FAILED" });
+        expect(plugin.app.workspace.trigger).not.toHaveBeenCalledWith(
+            "obsidian-git:head-change"
+        );
+        expect(plugin.setPluginState).toHaveBeenLastCalledWith({
+            operation: GitOperation.idle,
+        });
+        const count = fetchMock.mock.calls.length;
+        await manager.getUnpushedCommits();
+        expect(fetchMock.mock.calls.length).toBe(count + 1);
+    });
+
+    it("blocks stage-all with unsaved writes while permitting staged snapshot commits", async () => {
+        const { manager } = commitSetup();
+        window.__ignis!.writes!.getState = () => "pending";
+        await expect(
+            manager.commitAll({ message: "all" })
+        ).rejects.toMatchObject({ code: "BROWSER_DIRTY" });
+        await expect(
+            manager.commitSmart({ message: "smart" })
+        ).rejects.toMatchObject({ code: "BROWSER_DIRTY" });
+        expect(posts()).toHaveLength(0);
+        expect(await manager.commit({ message: "index snapshot" })).toBe(2);
+    });
+
+    it("keeps automatic commits, sync, Push and Amend unavailable without requests", async () => {
+        const { manager, actions } = commitSetup();
+        await expect(
+            manager.commit({ message: "amend", amend: true })
+        ).rejects.toMatchObject({ code: "AMEND_UNSUPPORTED" });
+        expect((await actions.commit({ fromAuto: true })).status).toBe(
+            "failed"
+        );
+        expect(
+            (await actions.commit({ fromAuto: false, amend: true })).status
+        ).toBe("failed");
+        expect(
+            (await actions.commitAndSync({ fromAutoBackup: false })).status
+        ).toBe("failed");
+        expect((await actions.push()).status).toBe("failed");
         expect(fetchMock).not.toHaveBeenCalled();
     });
 });

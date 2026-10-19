@@ -5,7 +5,7 @@
 # npm
 node_modules
 # main.js
-ignis
+/ignis/
 yarn.lock
 
 # build

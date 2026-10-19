@@ -15,7 +15,7 @@ class GitService {
         this.stopped = false;
     }
 
-    async run(repo, args, allowed = [0]) {
+    async run(repo, args, allowed = [0], input) {
         if (this.stopped)
             throw new GitServiceError(
                 "UNAVAILABLE",
@@ -52,7 +52,11 @@ class GitService {
                     env,
                     shell: false,
                     detached: process.platform !== "win32",
-                    stdio: ["ignore", "pipe", "pipe"],
+                    stdio: [
+                        input === undefined ? "ignore" : "pipe",
+                        "pipe",
+                        "pipe",
+                    ],
                 }
             );
             this.children.add(child);
@@ -64,6 +68,14 @@ class GitService {
                 failure ??= error;
                 this.kill(child);
             };
+            if (input !== undefined) {
+                child.stdin.on("error", (error) => {
+                    // A process that rejects its arguments may close stdin early.
+                    // Its exit status remains authoritative in that case.
+                    if (error.code !== "EPIPE") fail(publicError(error));
+                });
+                child.stdin.end(input);
+            }
             const timer = setTimeout(
                 () =>
                     fail(
@@ -129,11 +141,11 @@ class GitService {
                 }
                 const err = Buffer.concat(stderr).toString("utf8");
                 if (allowed.includes(code)) return resolve({ code, out });
-                console.error("[obsidian-git] Git command failed", {
-                    args,
-                    exitCode: code,
-                    stderr: err.slice(0, 4000),
-                });
+                // console.error("[obsidian-git] Git command failed", {
+                //     args,
+                //     exitCode: code,
+                //     stderr: err.slice(0, 4000),
+                // });
                 let error;
                 if (/dubious ownership/i.test(err))
                     error = new GitServiceError(
@@ -141,11 +153,7 @@ class GitService {
                         "Git rejected vault ownership. Run Ignis with the vault owner's UID/GID.",
                         403
                     );
-                else if (
-                    /index\.lock.*(?:exists|File exists)|Unable to create.*index\.lock/is.test(
-                        err
-                    )
-                )
+                else if (/index\.lock.*(?:exists|File exists)/is.test(err))
                     error = new GitServiceError(
                         "GIT_INDEX_LOCKED",
                         "Git's index is locked. Wait for other Git processes to finish; inspect stale locks outside Ignis.",
@@ -357,19 +365,18 @@ class GitService {
                     [0, 1]
                 )
             ).out.trim() || undefined;
+        const upstream = await this.run(
+            repo,
+            [
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ],
+            [0, 128]
+        );
         const tracking =
-            (
-                await this.run(
-                    repo,
-                    [
-                        "rev-parse",
-                        "--abbrev-ref",
-                        "--symbolic-full-name",
-                        "@{upstream}",
-                    ],
-                    [0, 128]
-                )
-            ).out.trim() || undefined;
+            upstream.code === 0 ? upstream.out.trim() || undefined : undefined;
         const branches = (
             await this.run(repo, [
                 "for-each-ref",
@@ -497,12 +504,7 @@ class GitService {
                 ).out;
                 const ignored = await this.run(
                     repo,
-                    [
-                        "check-ignore",
-                        "--quiet",
-                        "--",
-                        target,
-                    ],
+                    ["check-ignore", "--quiet", "--", target],
                     [0, 1]
                 );
                 if (
@@ -562,8 +564,7 @@ class GitService {
                 }
                 specs.push(":(exclude,literal)git_conflict.md");
                 if (staging) {
-                    const paths = selected.map((file) => `:(literal)${file.path}`);
-                    await this.run(repo, ["add", "-A", "--", ...paths]);
+                    await this.stageChanges(repo, selected);
                 } else if (await this.head(repo))
                     await this.run(repo, [
                         "restore",
@@ -590,6 +591,27 @@ class GitService {
                     : { [all ? "dir" : "path"]: target }),
             };
         });
+    }
+
+    async stageChanges(repo, changes) {
+        const paths = changes
+            .filter((file) => file.path !== "git_conflict.md")
+            .map((file) => {
+                this.validateIndexPath(file.path);
+                return `:(literal)${file.path}`;
+            });
+        if (paths.length) await this.run(repo, ["add", "-A", "--", ...paths]);
+    }
+
+    async commit(vaultId, input) {
+        if (typeof process.getuid !== "function" || process.getuid() === 0)
+            throw new GitServiceError(
+                "OWNERSHIP",
+                "Run Ignis as the non-root vault owner (configure the container UID/GID) before committing.",
+                403
+            );
+        const { commit } = require("./commit");
+        return this.locked(vaultId, (repo) => commit(this, repo, input));
     }
 
     async unfinished(repo) {

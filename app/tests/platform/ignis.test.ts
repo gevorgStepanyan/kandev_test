@@ -35,6 +35,12 @@ describe("Ignis runtime capabilities", () => {
         expect(guarded.checkCallback).toBeUndefined();
         for (const id of [
             "pull",
+            "commit",
+            "commit-specified-message",
+            "commit-smart",
+            "commit-smart-specified-message",
+            "commit-staged",
+            "commit-staged-specified-message",
             "stage-current-file",
             "unstage-current-file",
         ]) {
@@ -60,7 +66,7 @@ describe("Ignis runtime capabilities", () => {
         const actions = new GitActions(plugin);
         await actions.deleteRepository();
         await actions.cloneNewRepo();
-        await actions.commit({ fromAuto: false });
+        await actions.commit({ fromAuto: true });
         await actions.addFileToGitignore("note.md");
         expect(plugin.displayError).toHaveBeenCalledTimes(5);
     });

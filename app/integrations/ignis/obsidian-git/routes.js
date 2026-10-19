@@ -87,6 +87,13 @@ function mountRoutes(router, service, options) {
         );
     }
     router.post(
+        "/commit",
+        handle(
+            (id, input) => service.commit(id, input),
+            ["mode", "message", "amend", "autoStageOnEmptyIndex"]
+        )
+    );
+    router.post(
         "/pull",
         handle(async (id) => {
             try {
