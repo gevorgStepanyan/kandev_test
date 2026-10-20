@@ -432,7 +432,9 @@ export default class ObsidianGit extends Plugin {
                 item.setTitle(`Git: Add to .gitignore`)
                     .setIcon("file-x")
                     .setSection("action")
+                    .setDisabled(isIgnis())
                     .onClick((_) => {
+                        if (isIgnis()) return;
                         this.promiseQueue.addTask(() =>
                             this.gitActions.addFileToGitignore(
                                 filePath,
@@ -448,7 +450,9 @@ export default class ObsidianGit extends Plugin {
                 item.setTitle(`Git: Add to .gitignore`)
                     .setIcon("file-x")
                     .setSection("action")
+                    .setDisabled(isIgnis())
                     .onClick((_) => {
+                        if (isIgnis()) return;
                         this.promiseQueue.addTask(() =>
                             this.gitActions.addFileToGitignore(
                                 filePath,

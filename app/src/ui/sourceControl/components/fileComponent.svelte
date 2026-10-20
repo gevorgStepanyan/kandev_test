@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { isIgnis } from "src/platform/ignis";
     import { setIcon, TFile } from "obsidian";
     import { hoverPreview } from "src/utils";
     import type { FileStatusResult } from "src/types";
@@ -71,6 +72,7 @@
 
     function discard(event: MouseEvent) {
         event.stopPropagation();
+        if (isIgnis()) return;
         view.plugin.promiseQueue.addTask(() =>
             view.plugin.gitActions.discardFile(change)
         );
@@ -129,9 +131,11 @@
                 <div
                     data-icon="undo"
                     aria-label="Discard"
+                    aria-disabled={isIgnis()}
                     bind:this={buttons[1]}
                     onclick={discard}
                     class="clickable-icon"
+                    class:is-disabled={isIgnis()}
                 ></div>
                 <div
                     data-icon="plus"

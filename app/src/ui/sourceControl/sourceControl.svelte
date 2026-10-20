@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { isIgnis, IGNIS_FUTURE_FEATURE_NOTICE } from "src/platform/ignis";
+    import { isIgnis } from "src/platform/ignis";
     import { Menu, Platform, Scope, setIcon } from "obsidian";
     import { SOURCE_CONTROL_VIEW_CONFIG } from "src/constants";
     import type ObsidianGit from "src/main";
@@ -158,7 +158,6 @@
     });
 
     function getCommitActionDescription(sync: boolean): string {
-        if (isIgnis() && sync) return IGNIS_FUTURE_FEATURE_NOTICE;
         if (isIgnis() && mergeInProgress)
             return "Finish or abort the in-progress Git operation outside Ignis before committing";
         const suffix = sync ? " and sync" : "";
@@ -199,9 +198,13 @@
     }
 
     function canCommitAndSync(mode: "staged" | "all"): boolean {
-        if (isIgnis()) return true;
+        if (isIgnis()) return false;
         if (hasConflicts) return false;
         return mode === "all" || stagedCount > 0;
+    }
+
+    function canAmendStaged(): boolean {
+        return !isIgnis() && canCommit("staged");
     }
 
     function commit(mode: CommitMode = "smart") {
@@ -229,13 +232,7 @@
     }
 
     function amendStaged() {
-        if (isIgnis()) {
-            plugin.displayMessage(
-                "Amend is unavailable in Ignis because publication state cannot be established reliably."
-            );
-            return;
-        }
-        if (!canCommit("staged")) return;
+        if (!canAmendStaged()) return;
         loading = true;
         plugin.promiseQueue.addTask(() =>
             plugin.gitActions
@@ -251,10 +248,6 @@
     }
 
     function commitAndSync(mode: "staged" | "all" = "all") {
-        if (isIgnis()) {
-            plugin.displayIgnisFutureFeature();
-            return;
-        }
         if (!canCommitAndSync(mode)) return;
         loading = true;
         if (status) {
@@ -294,7 +287,7 @@
             item
                 .setTitle("Amend staged")
                 .setIcon("git-commit")
-                .setDisabled(!canCommit("staged"))
+                .setDisabled(!canAmendStaged())
                 .onClick(amendStaged)
         );
         menu.addSeparator();
@@ -302,7 +295,7 @@
             item
                 .setTitle("Commit staged and sync")
                 .setIcon("arrow-up-circle")
-                .setDisabled(!canCommit("staged"))
+                .setDisabled(!canCommitAndSync("staged"))
                 .onClick(() => commitAndSync("staged"))
         );
         menu.showAtMouseEvent(event);
@@ -448,10 +441,7 @@
     }
 
     function push() {
-        if (isIgnis()) {
-            plugin.displayIgnisFutureFeature();
-            return;
-        }
+        if (isIgnis()) return;
         loading = true;
         plugin.promiseQueue.addTask(() =>
             plugin.gitActions.push().finally(triggerRefresh)
@@ -464,11 +454,8 @@
         );
     }
     function discard(event: Event) {
-        if (isIgnis()) {
-            plugin.displayIgnisFutureFeature();
-            return;
-        }
         event.stopPropagation();
+        if (isIgnis()) return;
         plugin.promiseQueue.addTask(() => plugin.gitActions.discardAll());
     }
 
@@ -482,26 +469,19 @@
     class="git-view"
     class:repository-missing={repositoryMissing}
 >
-    {#if isIgnis()}
-        <p>
-            Ignis: Pull, staging, unstaging, manual Commit and repository status
-            are available. Push, history and diff tools are planned. Automatic
-            Pull runs only while this browser is active.
-        </p>
-    {/if}
     {#if repositoryMissing}
         <div class="repository-notice">
             <p>No Git repository found.</p>
             <div class="repository-actions">
                 <button
                     class="mod-cta"
-                    disabled={setupInProgress}
+                    disabled={setupInProgress || isIgnis()}
                     onclick={() =>
                         runSetupAction(() => plugin.gitActions.createNewRepo())}
                     >Initialize repository</button
                 >
                 <button
-                    disabled={setupInProgress}
+                    disabled={setupInProgress || isIgnis()}
                     onclick={() =>
                         runSetupAction(() => plugin.gitActions.cloneNewRepo())}
                     >Clone repository</button
@@ -560,6 +540,8 @@
             <div
                 id="push"
                 class="clickable-icon nav-action-button"
+                class:is-disabled={isIgnis()}
+                aria-disabled={isIgnis()}
                 data-icon="upload"
                 aria-label="Push"
                 bind:this={buttons[4]}
@@ -848,8 +830,10 @@
                                 <div
                                     data-icon="undo"
                                     aria-label="Discard"
+                                    aria-disabled={isIgnis()}
                                     onclick={discard}
                                     class="clickable-icon"
+                                    class:is-disabled={isIgnis()}
                                 >
                                     <svg
                                         xmlns="http://www.w3.org/2000/svg"
@@ -1101,6 +1085,11 @@
         }
     }
     main {
+        :global(.clickable-icon.is-disabled) {
+            opacity: var(--icon-opacity-inactive, 0.3);
+            cursor: default;
+        }
+
         .git-tools {
             .files-count {
                 padding-left: var(--size-2-1);

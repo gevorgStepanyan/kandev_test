@@ -1,5 +1,6 @@
 <!-- tslint:disable ts(2345)  -->
 <script lang="ts">
+    import { isIgnis } from "src/platform/ignis";
     import TreeComponent from "./treeComponent.svelte";
 
     import type ObsidianGit from "src/main";
@@ -56,6 +57,7 @@
     }
     function discard(event: MouseEvent, item: TreeItem) {
         event.stopPropagation();
+        if (isIgnis()) return;
         plugin.promiseQueue.addTask(() =>
             plugin.gitActions.discardAll(item.vaultPath)
         );
@@ -163,8 +165,10 @@
                                 <div
                                     data-icon="undo"
                                     aria-label="Discard"
+                                    aria-disabled={isIgnis()}
                                     onclick={(event) => discard(event, entity)}
                                     class="clickable-icon"
+                                    class:is-disabled={isIgnis()}
                                 >
                                     <svg
                                         xmlns="http://www.w3.org/2000/svg"

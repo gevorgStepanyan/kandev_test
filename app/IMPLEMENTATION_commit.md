@@ -117,3 +117,19 @@ Backend and frontend must both be upgraded. Keep existing settings and vault mou
 Push is the next phase; Push, Commit-and-sync, Amend, unattended commits/schedules,
 commit-message scripts, signing and unsupported history/diff features remain out
 of scope. Deployment-server behavioral verification remains pending.
+
+## UI follow-up
+
+Removed the generic future-feature tooltip from Commit-and-sync and the Ignis-only
+Source Control and obsolete pull-only settings banners. Commit and dropdown labels
+now use the same wording as local Obsidian Git. Existing manual Commit actions
+remain enabled. Unsupported Push, sync, Amend, Discard, repository setup and
+Add-to-.gitignore controls are explicitly disabled rather than appearing enabled
+and producing placeholder notices. Disabled row actions stop event propagation so
+they cannot accidentally open a diff. Native/mobile availability is unchanged.
+
+Changed `sourceControl.svelte`, its file/tree components, `settings.ts` and the
+existing context-menu definitions in `main.ts`; extended the existing UI handler
+regression tests. No server Git behavior changed. Tests remain intentionally
+unexecuted; see the UI follow-up in `TESTING_commit.md`. Install the rebuilt plugin
+`main.js` and reload the plugin/browser to replace any previously installed UI.

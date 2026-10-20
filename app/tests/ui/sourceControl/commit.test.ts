@@ -49,11 +49,19 @@ const status: Status = {
 type Handlers = {
     commit(mode?: CommitMode): void;
     showCommitMenu(event: { stopPropagation(): void }): void;
+    getCommitActionDescription(sync: boolean): string;
+    canCommitAndSync(mode: "staged" | "all"): boolean;
+    canAmendStaged(): boolean;
+    stageAll(event: { stopPropagation(): void }): void;
+    unstageAll(event: { stopPropagation(): void }): void;
+    pull(): void;
+    push(): void;
+    discard(event: { stopPropagation(): void }): void;
     setState(status: Status, message: string): void;
     readonly message: string;
     readonly loading: boolean;
 };
-function ui() {
+function ui(ignis = true) {
     const tasks: Promise<unknown>[] = [];
     const commit = vi.fn().mockResolvedValue({
         status: "success",
@@ -64,7 +72,16 @@ function ui() {
     const plugin = {
         settings: { commitMessage: "default", autoStageOnEmptyIndex: true },
         app: { workspace: { trigger } },
-        gitActions: { commit },
+        gitActions: {
+            commit,
+            stageAll: vi.fn().mockResolvedValue({ status: "success" }),
+            unstageAll: vi.fn().mockResolvedValue({ status: "success" }),
+            pullChangesFromRemote: vi
+                .fn()
+                .mockResolvedValue({ status: "success" }),
+            push: vi.fn().mockResolvedValue({ status: "success" }),
+            discardAll: vi.fn().mockResolvedValue({ status: "success" }),
+        },
         displayMessage: notice,
         displayIgnisFutureFeature: notice,
         promiseQueue: {
@@ -74,6 +91,7 @@ function ui() {
         },
     };
     const items = new Map<string, () => void>();
+    const disabledItems = new Map<string, boolean>();
     const menu = {
         addItem(configure: (item: unknown) => void) {
             let title = "";
@@ -85,7 +103,8 @@ function ui() {
                 setIcon() {
                     return item;
                 },
-                setDisabled() {
+                setDisabled(disabled: boolean) {
+                    disabledItems.set(title, disabled);
                     return item;
                 },
                 onClick(callback: () => void) {
@@ -109,15 +128,15 @@ function ui() {
         $derived: (value: unknown) => value,
         $effect: () => {},
         onMount: () => {},
-        isIgnis: () => true,
-        IGNIS_FUTURE_FEATURE_NOTICE: "future",
+        isIgnis: () => ignis,
         Menu: { forEvent: () => menu },
     };
     evaluate(
         source +
             `
         globalThis.handlers = {
-            commit, showCommitMenu,
+            commit, showCommitMenu, getCommitActionDescription, canCommitAndSync, canAmendStaged,
+            stageAll, unstageAll, pull, push, discard,
             setState(next, message) {
                 status = next; commitMessage = message;
                 stagedCount = next.staged.length; changedCount = next.changed.length;
@@ -131,7 +150,17 @@ function ui() {
     );
     const handlers = context.handlers as Handlers;
     handlers.setState(status, "-- 雪\n\nbody");
-    return { plugin, handlers, commit, trigger, items, notice, tasks, text };
+    return {
+        plugin,
+        handlers,
+        commit,
+        trigger,
+        items,
+        disabledItems,
+        notice,
+        tasks,
+        text,
+    };
 }
 
 describe("Source Control commit handlers", () => {
@@ -171,8 +200,8 @@ describe("Source Control commit handlers", () => {
         }
     );
 
-    it("dropdown preserves staged/all labels and routes each mode; unsupported items only notify", async () => {
-        const { handlers, commit, tasks, items, notice } = ui();
+    it("dropdown preserves staged/all labels and routes each mode; unsupported items are disabled", async () => {
+        const { handlers, commit, tasks, items, disabledItems, notice } = ui();
         handlers.showCommitMenu({ stopPropagation() {} });
         items.get("Commit staged")!();
         await Promise.all(tasks);
@@ -187,7 +216,61 @@ describe("Source Control commit handlers", () => {
         items.get("Amend staged")!();
         items.get("Commit staged and sync")!();
         expect(commit).toHaveBeenCalledTimes(2);
-        expect(notice).toHaveBeenCalledTimes(2);
+        expect(notice).not.toHaveBeenCalled();
+        expect(disabledItems.get("Commit staged")).toBe(false);
+        expect(disabledItems.get("Stage all and commit")).toBe(false);
+        expect(disabledItems.get("Amend staged")).toBe(true);
+        expect(disabledItems.get("Commit staged and sync")).toBe(true);
+    });
+
+    it("uses the same commit tooltips and menu labels as desktop without pilot text", () => {
+        const ignis = ui();
+        const desktop = ui(false);
+        for (const sync of [false, true]) {
+            expect(ignis.handlers.getCommitActionDescription(sync)).toBe(
+                desktop.handlers.getCommitActionDescription(sync)
+            );
+            expect(ignis.handlers.getCommitActionDescription(sync)).not.toMatch(
+                /not available|future|Ignis/
+            );
+        }
+        ignis.handlers.showCommitMenu({ stopPropagation() {} });
+        desktop.handlers.showCommitMenu({ stopPropagation() {} });
+        expect([...ignis.items.keys()]).toEqual([...desktop.items.keys()]);
+        expect(ignis.handlers.canCommitAndSync("all")).toBe(false);
+        expect(desktop.handlers.canCommitAndSync("all")).toBe(true);
+        expect(ignis.handlers.canAmendStaged()).toBe(false);
+        expect(desktop.handlers.canAmendStaged()).toBe(true);
+        expect(ignis.text).not.toContain("IGNIS_FUTURE_FEATURE_NOTICE");
+        expect(ignis.text).not.toContain("are available. Push, history");
+        expect(readFileSync("src/setting/settings.ts", "utf8")).not.toContain(
+            "Ignis pull-only pilot"
+        );
+    });
+
+    it("keeps Stage all, Unstage all and Pull wired to the existing actions without notices", async () => {
+        const { handlers, plugin, notice, tasks } = ui();
+        const event = { stopPropagation: vi.fn() };
+        handlers.stageAll(event);
+        handlers.unstageAll(event);
+        handlers.pull();
+        await Promise.all(tasks);
+        expect(plugin.gitActions.stageAll).toHaveBeenCalledOnce();
+        expect(plugin.gitActions.unstageAll).toHaveBeenCalledOnce();
+        expect(plugin.gitActions.pullChangesFromRemote).toHaveBeenCalledOnce();
+        expect(notice).not.toHaveBeenCalled();
+    });
+
+    it("disabled Push and Discard do not enqueue actions or show placeholder notices", () => {
+        const { handlers, plugin, notice, tasks } = ui();
+        const event = { stopPropagation: vi.fn() };
+        handlers.push();
+        handlers.discard(event);
+        expect(event.stopPropagation).toHaveBeenCalledOnce();
+        expect(plugin.gitActions.push).not.toHaveBeenCalled();
+        expect(plugin.gitActions.discardAll).not.toHaveBeenCalled();
+        expect(tasks).toHaveLength(0);
+        expect(notice).not.toHaveBeenCalled();
     });
 
     it("does not enqueue a second commit while one is running", async () => {

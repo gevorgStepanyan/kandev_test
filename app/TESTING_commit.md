@@ -101,3 +101,30 @@ were used. Production bundling initially hit esbuild OS-thread limits, then succ
 `GOMAXPROCS=1 GOGC=off UV_THREADPOOL_SIZE=1 node --v8-pool-size=1 esbuild.config.mjs production`.
 The normal deployment command remains `pnpm run build`. See
 `IMPLEMENTATION_commit.md` for final static check results. These checks do not establish test or deployment acceptance.
+
+## UI follow-up: standard labels and supported actions
+
+The Source Control pane now uses the standard commit/sync tooltips and dropdown
+labels. The Ignis-only pane banner and obsolete “pull-only pilot” settings banner
+are removed. Manual Commit, Commit staged, Stage all and commit, Stage/Unstage and
+Pull retain their existing action paths. Push, Commit-and-sync, Amend, Discard,
+repository setup and Add to .gitignore remain unsupported on Ignis and appear
+disabled, with their standard labels, rather than behaving as enabled placeholders.
+Desktop and mobile availability is unchanged.
+
+The existing `tests/ui/sourceControl/commit.test.ts` now also covers desktop/Ignis
+label parity, menu enabled/disabled states, supported staging/Pull routing and
+no-op handlers for disabled Push/Discard. **Tests generated but not executed
+(as requested).** The focused server command remains:
+
+```sh
+pnpm exec vitest run tests/ui/sourceControl/commit.test.ts tests/gitManager/ignisGit.test.ts tests/platform/ignis.test.ts
+```
+
+After installing the freshly built `main.js`, disable/re-enable Obsidian Git and
+reload the Ignis browser page. Check the Commit checkmark tooltip, commit dropdown
+labels, manual commit success, and enabled Stage/Unstage/Pull actions. Check that
+unsupported icons/menu items are disabled and do not show placeholder notices.
+Verify that normal desktop tooltips and menu behavior remain unchanged. These UI
+changes require updating the browser plugin artifact; a server restart alone does
+not replace a previously installed `main.js`.
