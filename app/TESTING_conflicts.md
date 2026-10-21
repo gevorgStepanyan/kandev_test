@@ -96,9 +96,9 @@ Disable other Git jobs for this disposable vault while verifying this workflow.
       silently doing nothing. Keep ours/theirs/both/base and manual edits
       use the ordinary editor/undo/save path. Mark resolved while an editable pane
       is open is blocked; switch to reading view and wait for successful saves.
-- [ ] Remaining markers block ordinary resolution unless explicitly acknowledged
-      as intentional literal text. Mark resolved moves the file from Conflicts to
-      Staged. Edit again and verify staged vs unstaged diffs show different bytes.
+- [ ] Remaining markers block resolution. Mark resolved moves the saved file or
+      deletion from Conflicts to Staged directly, without a confirmation popup.
+      Edit again and verify staged vs unstaged diffs show different bytes.
 - [ ] Review the staged diff and finish with the existing Commit button. A
       failed commit preserves the message/resolutions. A successful commit clears
       merge state and does not stage unrelated working edits or untracked notes.

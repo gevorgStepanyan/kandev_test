@@ -123,3 +123,16 @@
   Vitest tests and 95 server tests. The production build/bundle smoke test also
   passed, including checks that abort methods are absent and manual Pull and
   conflict editing still work.
+
+## Mark resolved without a popup
+
+- Mark resolved stages the saved resolution or deletion directly. Removed the
+  extra confirmation modal; the button click authorizes the request.
+- Browser/server content checks, save guards and server staging checks remain.
+  Remaining conflict markers produce an error rather than a confirmation modal.
+- Regression tests cover direct staging and deletion without opening a modal,
+  remaining marker refusal and stale-content handling.
+- Validation: `pnpm run all` passed TypeScript, Svelte, formatting, lint, 254
+  Vitest tests and 95 server tests. The production build/bundle smoke test
+  passed. Deploy the rebuilt browser `main.js`; no server update is required
+  for this change.

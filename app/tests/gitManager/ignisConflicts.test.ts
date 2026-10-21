@@ -486,9 +486,8 @@ describe("explicit merge workflow", () => {
         });
         expect(fetchMock).not.toHaveBeenCalled();
     });
-    it("reads and compares persisted resolution before confirming and posting its hash", async () => {
+    it("stages the saved resolution directly without a confirmation popup", async () => {
         const { manager, read } = setup();
-        choose.mockResolvedValueOnce("Mark resolved");
         const order: string[] = [];
         read.mockImplementation(() => {
             order.push("read");
@@ -511,6 +510,7 @@ describe("explicit merge workflow", () => {
         });
         await manager.markResolved("note.md");
         expect(order).toEqual(["details", "read", "stage"]);
+        expect(choose).not.toHaveBeenCalled();
         expect(
             JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)
         ).toMatchObject({
@@ -518,6 +518,48 @@ describe("explicit merge workflow", () => {
             expectedHash: sha256("resolved\n"),
             expectedMergeHead: upstream,
             confirmed: true,
+            allowMarkers: false,
+        });
+    });
+    it("rejects remaining conflict markers without opening a popup or staging", async () => {
+        const { manager, read } = setup();
+        const text = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> incoming\n";
+        read.mockResolvedValue(text);
+        fetchMock.mockResolvedValue(
+            response({
+                ...details,
+                contents: { ...details.contents, worktree: content(text) },
+            })
+        );
+        await expect(manager.markResolved("note.md")).rejects.toMatchObject({
+            code: "CONFLICT_NOT_RESOLVED",
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(choose).not.toHaveBeenCalled();
+    });
+    it("stages a saved deletion directly without a confirmation popup", async () => {
+        const { manager } = setup();
+        fetchMock
+            .mockResolvedValueOnce(
+                response({
+                    ...details,
+                    contents: {
+                        ...details.contents,
+                        worktree: { kind: "missing", hash: "missing" },
+                    },
+                })
+            )
+            .mockResolvedValueOnce(response(merging));
+        await manager.markResolved("note.md");
+        expect(choose).not.toHaveBeenCalled();
+        expect(
+            JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)
+        ).toMatchObject({
+            path: "note.md",
+            expectedHash: "missing",
+            confirmed: true,
+            delete: true,
+            allowMarkers: false,
         });
     });
     it("refuses browser/server mismatches and preserves state after a failed resolution", async () => {
@@ -528,7 +570,6 @@ describe("explicit merge workflow", () => {
             code: "STALE_MERGE_STATE",
         });
         expect(choose).not.toHaveBeenCalled();
-        choose.mockResolvedValueOnce("Mark resolved");
         fetchMock
             .mockResolvedValueOnce(response(details))
             .mockResolvedValueOnce(

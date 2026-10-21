@@ -36,6 +36,9 @@ CLI arguments or unrestricted revisions. Unknown fields are rejected.
 | `POST /mark-resolved` | `path`, `expectedHead`, `expectedMergeHead`, `expectedHash`, `confirmed: true`, optional boolean `delete`, `allowMarkers` | Updated merge state after staging only this verified resolution.                                                  |
 | `POST /commit`        | Existing `mode`, `message`, `amend: false`, Smart option                                                                  | Existing commit result plus actual `merge` and `repositoryStatus`. A merge can commit with zero changed files.    |
 
+Clicking **Mark resolved** supplies `confirmed: true` directly; this API field
+does not require an additional modal. The browser sends `allowMarkers: false`.
+
 Merge states are `clean`, `diverged`, `merge-conflicted`,
 `merge-awaiting-commit`, and `rebase-or-other`. Completion is confirmed by
 absence of Git operation metadata and unmerged stages; they are not persisted
@@ -80,8 +83,9 @@ invalid/inconsistent success payloads with `INVALID_RESPONSE`.
    ours/theirs/both/base buttons or edit manually. Save, switch to reading view,
    wait for writes and choose **Mark resolved**. Browser and server content
    hashes must agree; the server rechecks the file and index when staging.
-   Remaining marker lines require explicit acknowledgement as literal text.
-   A deleted resolution requires a separate deletion confirmation.
+   Mark resolved stages the saved resolution (including a saved deletion)
+   directly, without a confirmation popup. Remaining conflict marker lines block
+   resolution; finish editing and save before trying again.
 6. Review the staged diff and use the existing **Commit** button/command.
    During a merge, Commit All and Smart record only the index; they never stage
    unrelated edits. Every unmerged path must be resolved. Git produces a real

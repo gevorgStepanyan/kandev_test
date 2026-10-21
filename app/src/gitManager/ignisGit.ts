@@ -747,23 +747,16 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
         } else if (await this.app.vault.adapter.exists(vaultPath))
             throw new IgnisGitError(
                 "STALE_MERGE_STATE",
-                "The browser still has this file. Refresh before confirming deletion."
+                "The browser still has this file. Refresh before marking the deletion resolved."
             );
         const markers =
             file.kind === "text" &&
             /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?: |$)/m.test(file.text!);
-        const action = markers
-            ? "Stage intentional literal markers"
-            : file.kind === "missing"
-              ? "Mark deletion resolved"
-              : "Mark resolved";
-        if (
-            !(await this.confirm(
-                action,
-                `${path}: ${markers ? "Conflict markers remain. Only continue if they are intentional literal content." : "Stage this saved resolution?"}`
-            ))
-        )
-            return;
+        if (markers)
+            throw new IgnisGitError(
+                "CONFLICT_NOT_RESOLVED",
+                "Conflict markers remain. Resolve them and save before marking the file resolved."
+            );
         this.ensureStagingSafe();
         await this.mergeMutation("mark-resolved", {
             path,
@@ -772,7 +765,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
             expectedMergeHead: details.merge.mergeHead,
             confirmed: true,
             delete: file.kind === "missing",
-            allowMarkers: markers,
+            allowMarkers: false,
         });
     }
     unload(): void {
