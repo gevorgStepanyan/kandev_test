@@ -1,4 +1,4 @@
-# Ignis pull-only integration
+# Ignis Git integration
 
 This fork detects `window.__ignis.version` before selecting a Git manager.
 Desktop continues to use native `SimpleGit`; mobile continues to use
@@ -18,25 +18,36 @@ listeners. There is no second filesystem cache.
 
 ## Supported features and limits
 
-Supported: repository requirements, status/branch/upstream/merge state, last
-commit time, unpushed counts, manual Pull, boot Pull, and automatic Pull while the
-browser is active. Set **Auto pull interval (minutes)** to **60** for hourly pulls.
-Shared commit/push settings are ignored in Ignis; their stored values remain
-available on other devices.
+Supported: repository requirements, status/branch/upstream/operation state,
+last commit time, unpushed counts, manual/boot/automatic Pull, staging/unstaging,
+manual Commit, staged/unstaged diffs, and explicit normal merge resolution.
+Desktop/mobile continue using their existing backends. Ignis ignores shared
+automatic commit/push settings; browser Pull timers are not an unattended server
+scheduler and pause during unfinished Git operations.
 
-Pull requires a clean working tree and performs fetch plus fast-forward-only
-integration. Local-ahead commits are preserved. Dirty/staged/untracked work,
-divergence, unfinished operations and unsafe checkout conditions stop the pull.
-No stash, reset, automatic commit, rebase or merge commit is performed. A blocked
-repository pull creates `git_conflict.md`, excludes it using `.git/info/exclude`,
-and directs the user to it. Existing files/reports are preserved; no report is
-silently resolved or deleted. The pilot does not manage report name collisions.
+Pull still fetches the actual upstream and fast-forwards only. Divergence now
+offers **Merge incoming changes**, requiring explicit confirmation of the reviewed
+OIDs and a clean worktree. A normal merge remains pending, with real Git index
+stages preserved. Resolve text conflicts in the normal editor, save, switch to
+reading view and **Mark resolved**; finish using the existing **Commit** flow.
+During merges, every Commit mode uses only the intended staged set. Confirmed
+Abort merge is conservative and blocks if tracked files or the index changed
+after the merge began. It never substitutes a hard reset.
 
-Commit, sync, Push, standalone Fetch, staging/discard, clone/init, branch/remote
-configuration, history/diffs, snapshots, raw commands, editor hunks and authoring
-are unavailable. Commands and workflows stop before prompts or writes and show
-“This Git feature is not available in Ignis yet. It will be implemented in a
-future version.” Backend stubs also refuse direct calls.
+Diff View and read-only Split Diff View show server working-tree/index snapshots,
+including deletions and renames. Binary/oversized files show explicit notices.
+Complex conflicts and rebase/cherry-pick resolution require an authorized Git
+environment. Push, sync, standalone Fetch, discard, clone/init, branch/remotes,
+history/blame, arbitrary commands and interactive hunk operations remain
+unavailable in Ignis.
+
+The excluded `git_conflict.md` report appends diagnostic events to an unchanged
+integration-owned report; tracked, edited and user-owned reports are preserved.
+Its contents never determine whether a merge is active or resolved. Full API,
+discovery, safety and recovery details are in
+[CONFLICTS.md](../integrations/ignis/obsidian-git/CONFLICTS.md); local tests and a
+disposable-vault deployment checklist are in
+[TESTING_conflicts.md](../TESTING_conflicts.md).
 
 Only repositories rooted at a real vault directory immediately under
 `VAULT_ROOT` are supported. Leave base path and custom Git directory empty.
@@ -45,10 +56,10 @@ pilot validates at most 100,000 filesystem entries and limits each Git command
 to 60 seconds/8 MiB output. Browser requests have a 120-second timeout; if a
 request times out, inspect repository state before retrying.
 
-Before Pull, save notes and **close editable Markdown panes or switch them to
-reading view**. Pending/failed Ignis writes block Pull too. This conservative
+Before Pull, Merge, Abort merge or staging, save notes and **close editable Markdown panes or switch them to
+reading view**. Pending/failed/retrying Ignis writes block these operations too. This conservative
 rule avoids confusing disk state with unsaved editor buffers. Do not edit the
-vault from other tabs or external programs during a pull; the plugin's lock
+vault from other tabs or external programs during a Git mutation; the plugin's lock
 serializes its own requests, not unrelated filesystem writers. Browser timers
 are not an unattended server scheduler.
 
@@ -97,7 +108,7 @@ docker compose -f integrations/ignis/compose.yaml build
 docker compose -f integrations/ignis/compose.yaml up -d
 ```
 
-`IGNIS_GIT_ENABLED=true` explicitly enables routes. `IGNIS_GIT_ORIGIN` must be
+`IGNIS_GIT_ENABLED=false` disables routes globally; otherwise per-vault enablement applies. `IGNIS_GIT_ORIGIN` must be
 exactly the browser origin (scheme, host and optional port, no trailing slash).
 Set `IGNIS_BASE_IMAGE` if using another locally built base image. Existing
 `VAULT_ROOT`, `PUID` and `PGID` determine the vault location and runtime owner.
@@ -110,7 +121,7 @@ server, outside the image/browser/vault. `GIT_SSH_COMMAND` selects these files
 with strict host checking and batch mode. Configure repository remotes, Git
 identity and upstream outside the browser.
 
-Enable **Obsidian Git (pull-only pilot)** for each applicable vault in Ignis's
+Enable **Obsidian Git (Pull, staging, Commit and conflicts)** for each applicable vault in Ignis's
 server-plugin settings. On a stopped deployment, the equivalent persistent
 `data/plugin-config.json` entry is:
 
@@ -163,13 +174,16 @@ await fetch(
   and deploy-key access using the server runtime user.
 - Missing upstream: set the intended upstream in an authorized Git environment;
   the pilot does not guess a remote branch.
-- Dirty/diverged/unfinished: read the conflict report and resolve manually.
-  Save/close editable browser panes and allow writes to settle before retrying.
+- Dirty: save/preserve changes and allow writes to settle before retrying.
+- Diverged: review and explicitly select Merge incoming changes.
+- Unfinished merge: resolve/mark each path and Commit, or safely Abort merge.
+  Rebase/cherry-pick resolution remains outside Ignis.
 - Stale files: ensure the WebSocket is connected; use **Ignis: Refresh vault from
   disk**. A reconciliation failure after applied changes is reported as a
   refresh warning rather than a failed Git integration.
 - Browser native-API errors: capture the stack and confirm the Ignis backend was
-  selected. Native initialization and editor Git extensions are excluded there.
+  selected. Native initialization, signs and line authoring remain excluded there;
+  shared text-conflict editor controls are supported.
 
 Use `pnpm run test:ignis-server` for server integration tests and
 `pnpm run test:ignis-bundle` to build/check browser initialization with native
@@ -183,7 +197,7 @@ operator verification. Smoke-test up-to-date and changed remote branches, note
 visibility after Pull, blocked local work, missing upstream and unsupported
 buttons before adopting this pilot. Keep separate repositories for these tests.
 
-For a later Commit/Push phase, extend explicit capabilities and fixed endpoints,
+For a later Push/history phase, extend explicit capabilities and fixed endpoints,
 add shared workflow tests, and coordinate repository mutation with browser
 writes before adding more operations. Do not expand this API into arbitrary
 shell execution.

@@ -1,3 +1,4 @@
+import { isIgnis } from "src/platform/ignis";
 import { Modal } from "obsidian";
 import type ObsidianGit from "src/main";
 
@@ -27,7 +28,9 @@ export class MergeConflictModal extends Modal {
                 text: "Choose “Keep ours” for your local text, “Keep theirs” for the incoming text, “Keep both”, or edit the block manually.",
             });
             steps.createEl("li", {
-                text: "When the file's conflict count reaches zero, select the plus icon next to it to mark it as resolved.",
+                text: isIgnis()
+                    ? "Save the resolution, switch editable panes to reading view or close them, wait for writes in all tabs, then Mark resolved. Git index entries determine resolution; marker counts are only a hint."
+                    : "When the file's conflict count reaches zero, select the plus icon next to it to mark it as resolved.",
             });
             steps.createEl("li", {
                 text: "Repeat this for every file in the Conflicts section.",
@@ -46,7 +49,9 @@ export class MergeConflictModal extends Modal {
 
         contentEl.createEl("h3", { text: "Finish the merge" });
         contentEl.createEl("p", {
-            text: "After the Conflicts section is empty, enter a commit message and commit the staged changes. This finishes the merge. You can then push normally.",
+            text: isIgnis()
+                ? "After all Git paths are resolved, review the staged diff and Commit to finish the merge. Abort merge requires confirmation and is blocked after resolution edits. Push remains unavailable in Ignis."
+                : "After the Conflicts section is empty, enter a commit message and commit the staged changes. This finishes the merge. You can then push normally.",
         });
 
         const buttons = contentEl.createDiv({ cls: "modal-button-container" });

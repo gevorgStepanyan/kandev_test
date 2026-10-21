@@ -8,6 +8,7 @@ const { GitServiceError, publicError } = require("./errors");
 class GitService {
     constructor(ctx, options = {}) {
         this.ctx = ctx;
+        this.pendingWrites = options.pendingWrites;
         this.timeout = options.timeout ?? 60000;
         this.maxOutput = options.maxOutput ?? 8 * 1024 * 1024;
         this.locks = new Set();
@@ -15,7 +16,7 @@ class GitService {
         this.stopped = false;
     }
 
-    async run(repo, args, allowed = [0], input) {
+    async run(repo, args, allowed = [0], input, raw = false) {
         if (this.stopped)
             throw new GitServiceError(
                 "UNAVAILABLE",
@@ -33,6 +34,9 @@ class GitService {
             )
                 delete env[key];
         }
+        // Status/diff reads must not refresh the index on disk. Mandatory locks
+        // used by add, commit and merge are unaffected.
+        env.GIT_OPTIONAL_LOCKS = "0";
         return new Promise((resolve, reject) => {
             const child = spawn(
                 "git",
@@ -127,9 +131,11 @@ class GitService {
                 if (failure) return reject(failure);
                 let out;
                 try {
-                    out = new TextDecoder("utf-8", { fatal: true }).decode(
-                        Buffer.concat(stdout)
-                    );
+                    out = raw
+                        ? ""
+                        : new TextDecoder("utf-8", { fatal: true }).decode(
+                              Buffer.concat(stdout)
+                          );
                 } catch {
                     return reject(
                         new GitServiceError(
@@ -140,7 +146,12 @@ class GitService {
                     );
                 }
                 const err = Buffer.concat(stderr).toString("utf8");
-                if (allowed.includes(code)) return resolve({ code, out });
+                if (allowed.includes(code))
+                    return resolve({
+                        code,
+                        out,
+                        ...(raw ? { bytes: Buffer.concat(stdout) } : {}),
+                    });
                 // console.error("[obsidian-git] Git command failed", {
                 //     args,
                 //     exitCode: code,
@@ -334,6 +345,18 @@ class GitService {
         }
     }
 
+    async checkPendingWrites(repo) {
+        if (
+            this.pendingWrites?.().some(
+                (file) => file === repo || file.startsWith(repo + path.sep)
+            )
+        )
+            throw new GitServiceError(
+                "BROWSER_DIRTY",
+                "Ignis has pending server writes for this vault. Wait for saves in all tabs to finish."
+            );
+    }
+
     async health(vaultId) {
         try {
             await this.locked(vaultId, async () => {});
@@ -421,8 +444,14 @@ class GitService {
         }
         return {
             all,
-            changed: all.filter((v) => v.workingDir !== " "),
-            staged: all.filter((v) => ![" ", "?"].includes(v.index)),
+            changed: all.filter(
+                (v) => v.workingDir !== " " && !conflicted.includes(v.path)
+            ),
+            staged: all.filter(
+                (v) =>
+                    ![" ", "?"].includes(v.index) &&
+                    !conflicted.includes(v.path)
+            ),
             conflicted,
             stagedOutsideVault: 0,
             conflictedOutsideVault: 0,
@@ -483,10 +512,21 @@ class GitService {
                 file === target ||
                 file.startsWith(target + "/");
             const status = await this.status(repo);
+            const operationState = await require("./merge").state(this, repo);
+            if (!["none", "merge"].includes(operationState.operation))
+                throw new GitServiceError(
+                    "UNSUPPORTED_OPERATION",
+                    "This Git operation supports read-only inspection in Ignis. Finish it outside Ignis before staging or unstaging."
+                );
+            if (!staging && operationState.operation !== "none")
+                throw new GitServiceError(
+                    "UNSUPPORTED_OPERATION",
+                    "Unstaging during a Git operation is blocked to preserve resolution stages."
+                );
             if (status.conflicted.some(matches))
                 throw new GitServiceError(
                     "UNMERGED_PATH",
-                    "Resolve unmerged index entries outside Ignis before staging or unstaging this scope.",
+                    "Review each conflict in Source Control and mark its saved resolution explicitly before staging this scope.",
                     409
                 );
             const literal = (file) => `:(literal)${file}`;
@@ -504,7 +544,7 @@ class GitService {
                 ).out;
                 const ignored = await this.run(
                     repo,
-                    ["check-ignore", "--quiet", "--", target],
+                    ["check-ignore", "--quiet", "--", `./${target}`],
                     [0, 1]
                 );
                 if (
@@ -611,7 +651,9 @@ class GitService {
                 403
             );
         const { commit } = require("./commit");
-        return this.locked(vaultId, (repo) => commit(this, repo, input));
+        return this.locked(vaultId, (repo) =>
+            commit(this, repo, { ...input, vaultId })
+        );
     }
 
     async unfinished(repo) {
@@ -702,10 +744,12 @@ class GitService {
                     config[key] = await this.config(repo, key);
                 }
             }
+            const merge = await require("./merge").state(this, repo);
             return {
                 status,
                 branch,
-                mergeInProgress: await this.unfinished(repo),
+                mergeInProgress: merge.operation !== "none",
+                merge,
                 lastCommitTime,
                 unpushedCommits,
                 config,
@@ -717,6 +761,15 @@ class GitService {
     async report(repo, vaultId, reason, state, local, remote) {
         // Exclusive creation preserves all existing user/report files, including symlinks.
         const file = "git_conflict.md";
+        // A tracked report remains user-owned even when deleted in the worktree
+        // or staged for deletion. Never recreate it as an integration report.
+        for (const args of [
+            ["ls-files", "-z", "--", ":(literal)git_conflict.md"],
+            ...(local
+                ? [["ls-tree", "-z", local, "--", ":(literal)git_conflict.md"]]
+                : []),
+        ])
+            if ((await this.run(repo, args)).out) return undefined;
         const affected =
             local && remote
                 ? (
@@ -758,7 +811,17 @@ class GitService {
             "```",
             "",
             "## Recommended resolution",
-            "Review local work and reconcile the repository manually in an authorized Git environment.",
+            "Review Git status in Source Control. For divergence, choose Merge incoming changes. During a merge, resolve and stage each file, then Commit. Abort only after preserving resolution edits.",
+            ...(state.merge
+                ? [
+                      `Operation: ${state.merge.operation}`,
+                      `MERGE_HEAD: ${state.merge.mergeHead ?? "none"}`,
+                      ...state.merge.unresolvedPaths.map(
+                          (v) =>
+                              `${JSON.stringify(v.path)}: ${v.kind}; stages ${v.availableStages.join(",")}`
+                      ),
+                  ]
+                : []),
             "No automatic reset, rebase, stash, commit or discard was performed.",
             "",
         ].join("\n");
@@ -772,9 +835,38 @@ class GitService {
             await fs.appendFile(exclude, "\n/git_conflict.md\n");
         try {
             await fs.writeFile(path.join(repo, file), body, { flag: "wx" });
+            await fs.writeFile(
+                path.join(repo, ".git", "obsidian-git-report.sha256"),
+                require("./merge").digest(body)
+            );
         } catch (error) {
             if (error.code !== "EEXIST") throw error;
-            return undefined;
+            const tracked = (
+                await this.run(repo, [
+                    "ls-files",
+                    "-z",
+                    "--",
+                    ":(literal)git_conflict.md",
+                ])
+            ).out;
+            if (tracked) return undefined;
+            const token = path.join(repo, ".git", "obsidian-git-report.sha256");
+            const expected = await fs.readFile(token, "utf8").catch((e) => {
+                if (e.code === "ENOENT") return undefined;
+                throw e;
+            });
+            const existingBody = await fs.readFile(
+                path.join(repo, file),
+                "utf8"
+            );
+            if (
+                !expected ||
+                expected !== require("./merge").digest(existingBody)
+            )
+                return undefined;
+            const next = existingBody + "\n---\n\n" + body;
+            await fs.writeFile(path.join(repo, file), next);
+            await fs.writeFile(token, require("./merge").digest(next));
         }
         return file;
     }
@@ -792,7 +884,11 @@ class GitService {
                     repo,
                     vaultId,
                     message,
-                    { branch, status },
+                    {
+                        branch,
+                        status,
+                        merge: await require("./merge").state(this, repo),
+                    },
                     local,
                     remote
                 );
@@ -806,6 +902,7 @@ class GitService {
                     reportFile
                 );
             };
+            await this.checkPendingWrites(repo);
             if ((await this.unfinished(repo)) || status.conflicted.length)
                 await block(
                     "UNFINISHED_OPERATION",
@@ -814,7 +911,7 @@ class GitService {
             if (status.all.length)
                 await block(
                     "PULL_BLOCKED_DIRTY",
-                    "Local changes prevent a safe pull."
+                    "Local changes prevent a safe pull; unsafe to merge due to local changes."
                 );
             if (!branch.current || !branch.tracking || !local)
                 throw new GitServiceError(
@@ -864,7 +961,7 @@ class GitService {
             )
                 await block(
                     "DIVERGED",
-                    "Local and remote history have diverged; no merge or rebase was attempted."
+                    "Local and remote history have diverged. Open Source Control and choose Merge incoming changes to review and explicitly start a merge. No merge or rebase was attempted."
                 );
             const tree = (await this.run(repo, ["ls-tree", "-r", remote])).out;
             if (/^(120000|160000) /m.test(tree))
@@ -884,6 +981,7 @@ class GitService {
                     "Repository state changed during fetch; pull was stopped."
                 );
             await this.rejectSymlinks(repo);
+            await this.checkPendingWrites(repo);
             try {
                 await this.run(repo, [
                     "merge",
@@ -927,6 +1025,51 @@ class GitService {
             }
             return { status: "updated", files, outsideVault: 0 };
         });
+    }
+
+    async mergeState(vaultId) {
+        return this.locked(vaultId, (repo) =>
+            require("./merge").state(this, repo)
+        );
+    }
+    async fileContent(vaultId, input) {
+        return this.locked(vaultId, (repo) =>
+            require("./merge").content(this, repo, input.path, input.source)
+        );
+    }
+    async fileDiff(vaultId, input) {
+        return this.locked(vaultId, (repo) =>
+            require("./merge").diff(this, repo, input.path, input.kind)
+        );
+    }
+    async conflictDetails(vaultId, input) {
+        return this.locked(vaultId, async (repo) => {
+            const merge = require("./merge");
+            const current = await merge.state(this, repo);
+            this.validateIndexPath(input.path);
+            const entry = current.unresolvedPaths.find(
+                (v) => v.path === input.path
+            );
+            if (!entry)
+                throw new GitServiceError(
+                    "STALE_MERGE_STATE",
+                    "This path is no longer unmerged. Refresh status."
+                );
+            const contents = {};
+            for (const source of ["base", "ours", "theirs", "worktree"])
+                contents[source] = await merge.content(
+                    this,
+                    repo,
+                    input.path,
+                    source
+                );
+            return { ...entry, merge: current, contents };
+        });
+    }
+    async mergeAction(vaultId, action, input) {
+        return this.locked(vaultId, (repo) =>
+            require("./merge")[action](this, repo, { ...input, vaultId })
+        );
     }
 
     kill(child) {

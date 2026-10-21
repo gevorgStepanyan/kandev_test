@@ -21,10 +21,10 @@ export class EditorIntegration {
     }
 
     onLoadPlugin() {
-        if (isIgnis()) return;
         eventsPerFilePathSingleton.init();
         this.plg.registerEditorExtension(subscribeNewEditor);
         this.plg.registerEditorExtension(conflictExtensions);
+        if (isIgnis()) return;
         this.lineAuthoringFeature.onLoadPlugin();
         this.signsFeature.onLoadPlugin();
     }

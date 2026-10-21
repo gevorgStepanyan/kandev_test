@@ -29,7 +29,7 @@ Recreate the existing service to apply its environment and mount:
 docker compose -f example-ignis-docker-compose.yaml up -d --build ignis
 ```
 
-Enable **Obsidian Git (Pull, staging and Commit)** for `Main` through Ignis's server-plugin
+Enable **Obsidian Git (Pull, staging, Commit and conflicts)** for `Main` through Ignis's server-plugin
 settings. That per-vault setting controls backend enablement; an additional
 `IGNIS_GIT_ENABLED=true` is unnecessary. The plugin uses Ignis's configured vault
 root and enabled-vault list, rather than treating `GIT_VAULT` as authorization.
@@ -59,5 +59,14 @@ This checks local Git prerequisites; it does not fetch or pull from the remote.
 See [COMMIT.md](COMMIT.md) for the commit endpoint, modes, identity/ownership
 configuration, protected-index policy, authentication boundary, and exact build/
 reload steps. See [TESTING_commit.md](../../../TESTING_commit.md) for generated
-tests and manual deployment-server commands. Tests were intentionally not run
-locally. Existing mounts, origins and vault enablement continue to apply.
+tests and manual deployment-server commands. The current local checks cover
+Commit and conflict workflows; live deployment acceptance remains separate. Existing mounts, origins and vault enablement continue to apply.
+
+## Diffs and merge conflicts
+
+See [CONFLICTS.md](CONFLICTS.md) for the discovery inventory, actual API contracts,
+explicit divergence/merge/resolve/Commit/Abort workflow, write and abort safety
+policies, and supported conflict kinds. See
+[TESTING_conflicts.md](../../../TESTING_conflicts.md) for local commands and the
+manual deployment checklist. Install the complete directory including `merge.js`;
+existing origin, ownership, proxy authentication and vault settings still apply.

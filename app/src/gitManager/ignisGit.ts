@@ -1,3 +1,6 @@
+import { sha256 } from "js-sha256";
+import { GeneralModal } from "src/ui/modals/generalModal";
+import type { MergeState, MergeWorkflow } from "./mergeWorkflow";
 import { MarkdownView, moment } from "obsidian";
 import { GitManager } from "./gitManager";
 import {
@@ -5,6 +8,9 @@ import {
     ignisRequest,
     record,
     repositoryState,
+    mergeState,
+    fileContent,
+    conflictDetails,
     type IgnisRepositoryState,
     type IgnisMutationPayload,
     type IgnisCommitRequest,
@@ -21,13 +27,27 @@ import {
     type UnstagedFile,
 } from "src/types";
 
-export class IgnisGitManager extends GitManager {
+export class IgnisGitManager extends GitManager implements MergeWorkflow {
+    override readonly mergeWorkflow = this;
+    canResolveTextConflicts = false;
     private controllers = new Set<AbortController>();
     private pendingState?: Promise<IgnisRepositoryState>;
     private stateExpires = 0;
     private unloaded = false;
 
-    private async request(
+    private transportTail: Promise<unknown> = Promise.resolve();
+    private request(
+        endpoint: string,
+        post = false,
+        payload: IgnisMutationPayload = {}
+    ): Promise<unknown> {
+        const next = this.transportTail.then(() =>
+            this.requestNow(endpoint, post, payload)
+        );
+        this.transportTail = next.catch(() => {});
+        return next;
+    }
+    private async requestNow(
         endpoint: string,
         post = false,
         payload: IgnisMutationPayload = {}
@@ -68,7 +88,13 @@ export class IgnisGitManager extends GitManager {
     private state(): Promise<IgnisRepositoryState> {
         if (!this.pendingState || Date.now() >= this.stateExpires) {
             this.stateExpires = Number.POSITIVE_INFINITY;
-            const request = this.request("state").then(repositoryState);
+            const request = this.request("state")
+                .then(repositoryState)
+                .then((value) => {
+                    this.canResolveTextConflicts =
+                        value.merge?.operation === "merge";
+                    return value;
+                });
             this.pendingState = request;
             void request.then(
                 () => {
@@ -100,6 +126,9 @@ export class IgnisGitManager extends GitManager {
         return value.requirements as "valid" | "missing-repo" | "missing-git";
     }
     async status(opts?: { path?: string }): Promise<Status> {
+        // A refresh must observe writes and other tabs immediately, even within
+        // the short cache window shared by branch/count/operation readers.
+        this.pendingState = undefined;
         const status = (await this.state()).status;
         if (!opts?.path) return status;
         const path = this.getRelativeRepoPath(opts.path).replace(/\/$/, "");
@@ -151,16 +180,18 @@ export class IgnisGitManager extends GitManager {
         if (!writes)
             throw new IgnisGitError(
                 "BROWSER_STATE",
-                "The Ignis write-safety API is unavailable. Update Ignis before pulling."
+                "The Ignis write-safety API is unavailable. Update Ignis before Pull, Merge or Abort merge."
             );
         if (
             writes.getState() !== "clean" ||
+            (writes.listPending?.().length ?? 0) ||
             writes.listFailed().length ||
-            writes.getDetail().pending
+            writes.getDetail().pending ||
+            writes.getDetail().retrying
         )
             throw new IgnisGitError(
                 "BROWSER_DIRTY",
-                "Wait for Ignis writes to finish and resolve failed writes before pulling."
+                "Wait for Ignis writes to finish and resolve failed writes before Pull, Merge or Abort merge."
             );
         let editable = false;
         this.app.workspace.iterateAllLeaves((leaf) => {
@@ -173,7 +204,7 @@ export class IgnisGitManager extends GitManager {
         if (editable)
             throw new IgnisGitError(
                 "BROWSER_DIRTY",
-                "Close editable Markdown panes or switch them to reading view before pulling in this pilot. Unsaved edits must reach disk first."
+                "Close editable Markdown panes or switch them to reading view before Pull, Merge or Abort merge. Unsaved edits must reach disk first."
             );
     }
 
@@ -209,6 +240,7 @@ export class IgnisGitManager extends GitManager {
                 };
             } finally {
                 this.pendingState = undefined;
+                this.app.workspace.trigger("obsidian-git:refresh");
             }
         });
     }
@@ -216,7 +248,7 @@ export class IgnisGitManager extends GitManager {
     private unsupported(): never {
         throw new IgnisUnsupportedGitFeatureError();
     }
-    commitNoopReason: "nothing-staged" | "no-changes" = "no-changes";
+    commitNoopReason: "nothing-staged" | "no-changes" | undefined;
 
     commitAll(options: {
         message: string;
@@ -238,11 +270,15 @@ export class IgnisGitManager extends GitManager {
         options: { message: string; amend?: boolean }
     ): Promise<number> {
         return this.withGitOperation(GitOperation.commit, async () => {
+            this.commitNoopReason = undefined;
             if (options.amend)
                 throw new IgnisGitError(
                     "AMEND_UNSUPPORTED",
                     "Amend is unavailable in Ignis because publication state cannot be established reliably."
                 );
+            this.pendingState = undefined;
+            const merging = await this.isMergeInProgress();
+            if (merging) mode = "staged";
             if (
                 mode === "all" ||
                 (mode === "smart" && this.plugin.settings.autoStageOnEmptyIndex)
@@ -323,7 +359,8 @@ export class IgnisGitManager extends GitManager {
                         value.commit.hash
                     ) ||
                     !Number.isSafeInteger(value.commit.files) ||
-                    (value.commit.files as number) <= 0 ||
+                    (value.commit.files as number) < 0 ||
+                    (!merging && value.commit.files === 0) ||
                     typeof value.commit.branch !== "string" ||
                     !value.commit.branch
                 )
@@ -331,6 +368,19 @@ export class IgnisGitManager extends GitManager {
                         "INVALID_RESPONSE",
                         "Invalid Ignis commit result. Inspect history before retrying; a commit may already exist."
                     );
+                if (merging) {
+                    const completed = mergeState(value.merge);
+                    if (
+                        completed.operation !== "none" ||
+                        completed.head !== value.commit.hash
+                    )
+                        throw new IgnisGitError(
+                            "INVALID_RESPONSE",
+                            "The server did not confirm merge completion. Inspect repository state before retrying."
+                        );
+                }
+                if (typeof value.refreshWarning === "string")
+                    this.plugin.displayMessage(value.refreshWarning);
                 this.pendingState = undefined;
                 this.app.workspace.trigger("obsidian-git:head-change");
                 return value.commit.files as number;
@@ -418,7 +468,8 @@ export class IgnisGitManager extends GitManager {
             (writes.listPending?.().length ?? 0) ||
             writes.listFailed().length ||
             writes.getState() !== "clean" ||
-            writes.getDetail().pending
+            writes.getDetail().pending ||
+            writes.getDetail().retrying
         )
             throw new IgnisGitError(
                 "BROWSER_DIRTY",
@@ -449,10 +500,18 @@ export class IgnisGitManager extends GitManager {
     unstageAll(options: { dir?: string; status?: Status }): Promise<void> {
         return this.mutateIndex("unstage-all", { dir: options.dir });
     }
-    stage(filepath: string, relativeToVault: boolean): Promise<void> {
-        return this.mutateIndex("stage", {
-            path: this.getRelativeRepoPath(filepath, relativeToVault),
-        });
+    async stage(filepath: string, relativeToVault: boolean): Promise<void> {
+        const path = this.getRelativeRepoPath(filepath, relativeToVault);
+        try {
+            await this.mutateIndex("stage", { path });
+        } catch (error) {
+            if (
+                error instanceof IgnisGitError &&
+                error.code === "UNMERGED_PATH"
+            )
+                await this.markResolved(path);
+            else throw error;
+        }
     }
     unstage(filepath: string, relativeToVault: boolean): Promise<void> {
         return this.mutateIndex("unstage", {
@@ -519,11 +578,199 @@ export class IgnisGitManager extends GitManager {
     updateBasePath(): Promise<void> {
         return this.unsupported();
     }
-    getDiffString(): Promise<string> {
-        return this.unsupported();
+    async getDiffString(
+        filePath: string,
+        stagedChanges = false,
+        hash?: string
+    ): Promise<string> {
+        if (hash && hash !== "HEAD") return this.unsupported();
+        const value = await this.request(
+            `diff?path=${encodeURIComponent(filePath)}&kind=${stagedChanges ? "staged" : "unstaged"}`
+        );
+        if (
+            !record(value) ||
+            typeof value.diff !== "string" ||
+            !["text", "binary", "oversized", "unsupported"].includes(
+                String(value.kind)
+            )
+        )
+            throw new IgnisGitError(
+                "INVALID_RESPONSE",
+                "Invalid diff response."
+            );
+        if (value.kind !== "text")
+            throw new IgnisGitError(
+                "NON_TEXT_DIFF",
+                "This file is binary or too large for a text diff."
+            );
+        return value.diff;
     }
-    show(): Promise<string> {
-        return this.unsupported();
+    async getFileContent(path: string, source: string) {
+        return fileContent(
+            await this.request(
+                `content?path=${encodeURIComponent(path)}&source=${encodeURIComponent(source)}`
+            )
+        );
+    }
+    async show(
+        commitHash: string,
+        file: string,
+        relativeToVault = true
+    ): Promise<string> {
+        const source = (
+            {
+                HEAD: "head",
+                "": "index",
+                ":1": "base",
+                ":2": "ours",
+                ":3": "theirs",
+            } as Record<string, string>
+        )[commitHash];
+        if (!source) return this.unsupported();
+        const value = await this.getFileContent(
+            this.getRelativeRepoPath(file, relativeToVault),
+            source
+        );
+        if (value.kind === "missing") return "";
+        if (value.kind !== "text")
+            throw new IgnisGitError(
+                "NON_TEXT_DIFF",
+                "This snapshot is binary, oversized or uses an unsupported Git mode."
+            );
+        return value.text!;
+    }
+    async getMergeState(): Promise<MergeState> {
+        const value = mergeState(await this.request("merge-state"));
+        this.canResolveTextConflicts = value.operation === "merge";
+        return value;
+    }
+    async getConflictDetails(path: string) {
+        return conflictDetails(
+            await this.request(`conflicts?path=${encodeURIComponent(path)}`)
+        );
+    }
+    private async confirm(
+        action: string,
+        description: string
+    ): Promise<boolean> {
+        return (
+            (await new GeneralModal(this.plugin, {
+                options: ["Cancel", action],
+                onlySelection: true,
+                placeholder: description,
+            }).openAndGetResult()) === action
+        );
+    }
+    private async mergeMutation(
+        endpoint: string,
+        payload: IgnisMutationPayload
+    ): Promise<void> {
+        await this.withGitOperation(GitOperation.pull, async () => {
+            try {
+                const value = await this.request(endpoint, true, payload);
+                const state = mergeState(value);
+                if (
+                    endpoint === "merge/abort"
+                        ? state.operation !== "none"
+                        : state.operation !== "merge"
+                )
+                    throw new IgnisGitError(
+                        "INVALID_RESPONSE",
+                        "The server did not confirm the expected merge state. Refresh before retrying."
+                    );
+                if (record(value) && typeof value.refreshWarning === "string")
+                    this.plugin.displayMessage(value.refreshWarning);
+                this.plugin.displayMessage(
+                    state.kind === "merge-conflicted"
+                        ? "Merge in progress. Resolve each conflict, save and mark resolved, then Commit."
+                        : state.kind === "merge-awaiting-commit"
+                          ? "All paths resolved. Review staged changes and finish the merge with Commit."
+                          : "Merge aborted. Repository state verified."
+                );
+            } finally {
+                this.pendingState = undefined;
+                this.app.workspace.trigger("obsidian-git:head-change");
+                this.app.workspace.trigger("obsidian-git:refresh");
+            }
+        });
+    }
+    async startMerge(state: MergeState): Promise<void> {
+        if (
+            !(await this.confirm(
+                "Merge incoming changes",
+                `Merge ${state.upstream?.ref ?? "upstream"} (${state.upstream?.oid.slice(0, 12) ?? "unknown"}) into HEAD ${state.head?.slice(0, 12)}? Commit remains manual.`
+            ))
+        )
+            return;
+        this.ensureBrowserSafe();
+        await this.mergeMutation("merge", {
+            expectedHead: state.head,
+            expectedUpstream: state.upstream?.oid,
+            confirmed: true,
+        });
+    }
+    async abortMerge(state: MergeState): Promise<void> {
+        if (
+            !(await this.confirm(
+                "Abort merge",
+                "Abort this merge? Resolution edits may be lost. Abort is blocked if files or the index changed since merge began."
+            ))
+        )
+            return;
+        this.ensureBrowserSafe();
+        await this.mergeMutation("merge/abort", {
+            expectedHead: state.head,
+            expectedMergeHead: state.mergeHead,
+            confirmed: true,
+        });
+    }
+    async markResolved(path: string): Promise<void> {
+        this.ensureStagingSafe();
+        const details = await this.getConflictDetails(path);
+        const file = details.contents.worktree;
+        if (file.kind !== "text" && file.kind !== "missing")
+            throw new IgnisGitError(
+                "UNSUPPORTED_OPERATION",
+                "Resolve binary or oversized conflicts outside Ignis; stage data is available for inspection."
+            );
+        const vaultPath = this.getRelativeVaultPath(path);
+        if (file.kind === "text") {
+            const local = await this.app.vault.adapter.read(vaultPath);
+            if (sha256(local) !== file.hash)
+                throw new IgnisGitError(
+                    "STALE_MERGE_STATE",
+                    "The browser and server file content differ. Wait for saves, refresh and review again."
+                );
+        } else if (await this.app.vault.adapter.exists(vaultPath))
+            throw new IgnisGitError(
+                "STALE_MERGE_STATE",
+                "The browser still has this file. Refresh before confirming deletion."
+            );
+        const markers =
+            file.kind === "text" &&
+            /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?: |$)/m.test(file.text!);
+        const action = markers
+            ? "Stage intentional literal markers"
+            : file.kind === "missing"
+              ? "Mark deletion resolved"
+              : "Mark resolved";
+        if (
+            !(await this.confirm(
+                action,
+                `${path}: ${markers ? "Conflict markers remain. Only continue if they are intentional literal content." : "Stage this saved resolution?"}`
+            ))
+        )
+            return;
+        this.ensureStagingSafe();
+        await this.mergeMutation("mark-resolved", {
+            path,
+            expectedHash: file.hash,
+            expectedHead: details.merge.head,
+            expectedMergeHead: details.merge.mergeHead,
+            confirmed: true,
+            delete: file.kind === "missing",
+            allowMarkers: markers,
+        });
     }
     unload(): void {
         this.unloaded = true;

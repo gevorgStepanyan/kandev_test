@@ -15,6 +15,25 @@ export function addCommmands(plugin: ObsidianGit) {
             commandForRuntime(command, () => plugin.displayIgnisFutureFeature())
         );
 
+    for (const [id, name, action] of [
+        [
+            "merge-incoming-changes",
+            "Merge incoming changes",
+            () => plugin.gitActions.mergeIncomingChanges(),
+        ],
+        ["abort-merge", "Abort merge", () => plugin.gitActions.abortMerge()],
+    ] as const)
+        addCommand({
+            id,
+            name,
+            checkCallback: (checking) => {
+                if (!plugin.gitReady || !plugin.gitManager.mergeWorkflow)
+                    return false;
+                if (!checking) plugin.promiseQueue.addTask(action);
+                return true;
+            },
+        });
+
     addCommand({
         id: "edit-gitignore",
         name: "Edit .gitignore",

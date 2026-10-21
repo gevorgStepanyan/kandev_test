@@ -14,7 +14,10 @@ import type {
     UnstagedFile,
 } from "../types";
 
+import type { MergeWorkflow } from "./mergeWorkflow";
+
 export abstract class GitManager {
+    readonly mergeWorkflow?: MergeWorkflow;
     readonly plugin: ObsidianGit;
     readonly app: App;
     constructor(plugin: ObsidianGit) {

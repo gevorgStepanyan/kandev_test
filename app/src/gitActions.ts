@@ -1,3 +1,4 @@
+import { IgnisConflictModal } from "./ui/modals/ignisConflictModal";
 import {
     isIgnis,
     IgnisGitError,
@@ -672,7 +673,12 @@ export class GitActions {
             }
 
             this.plugin.app.workspace.trigger("obsidian-git:refresh");
-            if (committedFiles === 0 && (!mergeInProgress || ignisManager)) {
+            if (
+                committedFiles === 0 &&
+                (ignisManager
+                    ? ignisManager.commitNoopReason !== undefined
+                    : !mergeInProgress)
+            ) {
                 // simple-git resolves with { changes: 0 } instead of
                 // throwing when there is nothing to commit (e.g. the
                 // detected change was already committed by a previous run).
@@ -922,6 +928,31 @@ export class GitActions {
                 }
             }
         }
+    }
+
+    async mergeIncomingChanges(): Promise<void> {
+        await this.runReadyGitAction(async () => {
+            const workflow = this.plugin.gitManager.mergeWorkflow;
+            if (!workflow) throw new IgnisUnsupportedGitFeatureError();
+            await workflow.startMerge(await workflow.getMergeState());
+        }, true);
+    }
+    async abortMerge(): Promise<void> {
+        await this.runReadyGitAction(async () => {
+            const workflow = this.plugin.gitManager.mergeWorkflow;
+            if (!workflow) throw new IgnisUnsupportedGitFeatureError();
+            await workflow.abortMerge(await workflow.getMergeState());
+        }, true);
+    }
+    reviewConflict(path: string): void {
+        new IgnisConflictModal(this.plugin, path).open();
+    }
+    async markResolved(path: string): Promise<void> {
+        await this.runReadyGitAction(async () => {
+            const workflow = this.plugin.gitManager.mergeWorkflow;
+            if (!workflow) throw new IgnisUnsupportedGitFeatureError();
+            await workflow.markResolved(path);
+        }, true);
     }
 
     async stageFile(

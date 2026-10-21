@@ -32,7 +32,7 @@ async function indexEntries(service, repo) {
             if (stage !== "0")
                 reject(
                     "UNMERGED_INDEX",
-                    "Resolve unmerged index entries outside Ignis before committing."
+                    "Resolve and mark every conflict resolved in Source Control before committing."
                 );
             if (!["100644", "100755"].includes(mode))
                 reject(
@@ -45,12 +45,18 @@ async function indexEntries(service, repo) {
 }
 
 async function validateState(service, repo) {
-    if (await service.unfinished(repo))
+    const entries = await indexEntries(service, repo);
+    const merge = await require("./merge").state(service, repo);
+    if (merge.operation !== "none" && merge.operation !== "merge")
         reject(
             "UNFINISHED_OPERATION",
             "Finish or abort the merge, rebase, cherry-pick, revert or bisect outside Ignis before committing."
         );
-    const entries = await indexEntries(service, repo);
+    if (merge.operation === "merge" && merge.mergeHead === merge.head)
+        reject(
+            "UNFINISHED_OPERATION",
+            "Invalid merge metadata. Inspect this operation outside Ignis."
+        );
     // Also protect a tracked report staged for deletion (absent from the index).
     const head = await service.head(repo);
     if (
@@ -71,7 +77,7 @@ async function validateState(service, repo) {
             "CONFLICT_REPORT_STAGED",
             "The conflict report is tracked in HEAD. Preserve it and reconcile its tracking outside Ignis before committing."
         );
-    return { entries, head };
+    return { entries, head, merge };
 }
 
 async function commit(service, repo, input) {
@@ -122,11 +128,16 @@ async function commit(service, repo, input) {
     const before = await validateState(service, repo);
     let status = await service.status(repo);
     const stageAll =
-        input.mode === "all" ||
-        (input.mode === "smart" &&
-            !status.staged.length &&
-            input.autoStageOnEmptyIndex);
-    if (!stageAll && !status.staged.length)
+        before.merge.operation !== "merge" &&
+        (input.mode === "all" ||
+            (input.mode === "smart" &&
+                !status.staged.length &&
+                input.autoStageOnEmptyIndex));
+    if (
+        !stageAll &&
+        !status.staged.length &&
+        before.merge.operation !== "merge"
+    )
         return { status: "nothing-to-commit", reason: "nothing-staged" };
     if (
         stageAll &&
@@ -147,7 +158,7 @@ async function commit(service, repo, input) {
         if (stageAll) await service.stageChanges(repo, status.changed);
         const current = await validateState(service, repo);
         status = await service.status(repo);
-        if (!status.staged.length)
+        if (!status.staged.length && before.merge.operation !== "merge")
             return { status: "nothing-to-commit", reason: "no-changes" };
         const changedPaths = new Set(status.staged.map((file) => file.path));
         const hashes = [
@@ -186,7 +197,8 @@ async function commit(service, repo, input) {
         if (
             current.head !== before.head ||
             (await service.head(repo)) !== before.head ||
-            (await service.unfinished(repo))
+            current.merge.operation !== before.merge.operation ||
+            current.merge.mergeHead !== before.merge.mergeHead
         )
             reject(
                 "REPOSITORY_CHANGED",
@@ -233,7 +245,10 @@ async function commit(service, repo, input) {
         ).out.trim();
         if (
             actualTree !== tree ||
-            parents !== (before.head ?? "") ||
+            parents !==
+                [before.head, before.merge.mergeHead]
+                    .filter(Boolean)
+                    .join(" ") ||
             (await service.branch(repo)).current !== branch.current
         )
             reject(
@@ -250,19 +265,49 @@ async function commit(service, repo, input) {
                     "--no-renames",
                     "-r",
                     "-z",
-                    next,
+                    ...(before.merge.operation === "merge"
+                        ? [before.head, next]
+                        : [next]),
                 ])
             ).out
                 .split("\0")
                 .filter(Boolean)
         ).size;
-        if (!files)
+        if (!files && before.merge.operation !== "merge")
             reject(
                 "GIT_COMMIT_OUTCOME_UNCERTAIN",
                 "An unexpected empty commit was observed. Inspect history before retrying."
             );
+        const merge = await require("./merge").state(service, repo);
+        if (merge.operation !== "none" || merge.unresolvedPaths.length)
+            reject(
+                "GIT_COMMIT_OUTCOME_UNCERTAIN",
+                "Commit left unexpected Git operation state. Inspect repository before retrying."
+            );
+        if (before.merge.operation === "merge") {
+            await require("./merge").report(
+                service,
+                repo,
+                input.vaultId,
+                merge,
+                "Merge complete; two-parent commit verified: " + next
+            );
+            await fs
+                .unlink(
+                    await require("./merge").gitPath(
+                        service,
+                        repo,
+                        "obsidian-git-merge.json"
+                    )
+                )
+                .catch((e) => {
+                    if (e.code !== "ENOENT") throw e;
+                });
+        }
         return {
             status: "committed",
+            merge,
+            repositoryStatus: await service.status(repo),
             commit: {
                 hash: next,
                 shortHash: next.slice(0, 12),

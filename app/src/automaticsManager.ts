@@ -229,7 +229,14 @@ export default class AutomaticsManager {
 
     private doAutoPull(): void {
         this.plugin.promiseQueue.addTask(
-            () => this.plugin.gitActions.pullChangesFromRemote(),
+            async () => {
+                if (
+                    isIgnis() &&
+                    (await this.plugin.gitManager.isMergeInProgress())
+                )
+                    return;
+                await this.plugin.gitActions.pullChangesFromRemote();
+            },
             () => {
                 this.saveLastAuto(new Date(), "pull");
                 this.startAutoPull();

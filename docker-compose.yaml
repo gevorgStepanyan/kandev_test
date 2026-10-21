@@ -7,6 +7,7 @@ services:
     volumes:
       # Agent sees only /project/app
       - ./app:/workspace:rw
+      - ./.codex/sessions:/home/agent/.codex/sessions:rw
     ports:
       - "5001:5000" #demo app server
       - "38429:38429" #kandev server
@@ -14,7 +15,7 @@ services:
     #   - ALL
     # security_opt:
     #   - no-new-privileges
-    pids_limit: 512
+    # pids_limit: 512
     command: sleep infinity
     environment:
       GIT_AUTHOR_NAME: "AI Agent"

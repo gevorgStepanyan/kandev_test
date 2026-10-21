@@ -3,11 +3,14 @@ const { mountRoutes } = require("./routes");
 const { routeOptions } = require("./configuration");
 module.exports = {
     id: "obsidian-git",
-    name: "Obsidian Git (Pull, staging and Commit)",
+    name: "Obsidian Git (Pull, staging, Commit and conflicts)",
     description:
-        "Native fast-forward-only pulls, staging and manual commits for the Obsidian Git browser backend",
+        "Native Git Pull, diffs, staging, manual merges and commits for the Obsidian Git browser backend",
     async register(ctx) {
-        this.service = new GitService(ctx);
+        const { writeCoalescer } = require("@ignis/server-core");
+        this.service = new GitService(ctx, {
+            pendingWrites: () => writeCoalescer.pendingPaths(),
+        });
         const cache = require("../../cache");
         mountRoutes(ctx.router, this.service, {
             ...routeOptions(),

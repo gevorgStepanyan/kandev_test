@@ -5,6 +5,9 @@ export const IGNIS_FUTURE_FEATURE_NOTICE =
 
 export interface IgnisRuntime {
     version?: string;
+    ws?: {
+        onStateChange(handler: (state: string) => void): () => void;
+    };
     writes?: {
         getState(): string;
         listFailed(): string[];
@@ -42,6 +45,8 @@ export function commandForRuntime(
         !isIgnis() ||
         [
             "pull",
+            "merge-incoming-changes",
+            "abort-merge",
             "commit",
             "commit-specified-message",
             "commit-smart",

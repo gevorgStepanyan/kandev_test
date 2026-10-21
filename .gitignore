@@ -24,3 +24,6 @@ app/.git
 #unused files
 ./app/ignis
 
+#codex sessions
+.codex/sessions/*
+!.codex/sessions/.gitkeep

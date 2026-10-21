@@ -1,10 +1,12 @@
 import { IgnisGitError } from "src/platform/ignis";
+import type { MergeState, FileContent, ConflictDetails } from "./mergeWorkflow";
 import type { BranchInfo, FileStatusResult, Status } from "src/types";
 
 export interface IgnisRepositoryState {
     status: Status;
     branch: BranchInfo;
     mergeInProgress: boolean;
+    merge?: MergeState;
     lastCommitTime: string | null;
     unpushedCommits: number;
     config: Record<string, string | undefined>;
@@ -19,7 +21,18 @@ export type IgnisCommitRequest = {
 };
 
 export type IgnisMutationPayload =
-    { path?: string; dir?: string } | IgnisCommitRequest;
+    | { path?: string; dir?: string }
+    | IgnisCommitRequest
+    | {
+          expectedHead?: string | null;
+          expectedUpstream?: string;
+          expectedMergeHead?: string;
+          expectedHash?: string;
+          confirmed?: boolean;
+          path?: string;
+          delete?: boolean;
+          allowMarkers?: boolean;
+      };
 
 export function record(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -37,7 +50,13 @@ function safePath(value: unknown): value is string {
         !value.startsWith("/") &&
         !value.includes("\\") &&
         !value.includes("\0") &&
-        !value.split("/").some((p) => p === ".." || p === ".")
+        !/^[a-z]:/i.test(value) &&
+        !value
+            .split("/")
+            .some(
+                (p) =>
+                    !p || p === ".." || p === "." || p.toLowerCase() === ".git"
+            )
     );
 }
 export function fileEntries(value: unknown): value is FileStatusResult[] {
@@ -97,6 +116,7 @@ export function repositoryState(value: unknown): IgnisRepositoryState {
             "The Ignis Git server returned invalid repository state."
         );
     }
+    if (value.merge !== undefined) mergeState(value.merge);
     return value as unknown as IgnisRepositoryState;
 }
 
@@ -110,7 +130,7 @@ export async function ignisRequest(
     let response: Response;
     try {
         response = await fetch(
-            `/api/ext/obsidian-git/${endpoint}${post ? "" : `?vaultId=${encodeURIComponent(vaultId)}`}`,
+            `/api/ext/obsidian-git/${endpoint}${post ? "" : `${endpoint.includes("?") ? "&" : "?"}vaultId=${encodeURIComponent(vaultId)}`}`,
             {
                 method: post ? "POST" : "GET",
                 credentials: "same-origin",
@@ -162,4 +182,104 @@ export async function ignisRequest(
         );
     }
     return value;
+}
+
+export function mergeState(value: unknown): MergeState {
+    if (
+        !record(value) ||
+        !["none", "merge", "rebase", "cherry-pick", "other"].includes(
+            String(value.operation)
+        ) ||
+        ![
+            "clean",
+            "diverged",
+            "merge-conflicted",
+            "merge-awaiting-commit",
+            "rebase-or-other",
+        ].includes(String(value.kind)) ||
+        (value.head !== null && !validOid(value.head)) ||
+        (value.mergeHead !== undefined && !validOid(value.mergeHead)) ||
+        (value.upstream !== undefined &&
+            (!record(value.upstream) ||
+                !validOid(value.upstream.oid) ||
+                typeof value.upstream.ref !== "string")) ||
+        typeof value.canCommitMerge !== "boolean" ||
+        typeof value.canAbortMerge !== "boolean" ||
+        !Array.isArray(value.unresolvedPaths) ||
+        !value.unresolvedPaths.every(
+            (v: unknown) =>
+                record(v) &&
+                safePath(v.path) &&
+                typeof v.kind === "string" &&
+                Array.isArray(v.availableStages) &&
+                v.availableStages.length > 0 &&
+                v.availableStages.every((stage: unknown) =>
+                    [1, 2, 3].includes(stage as number)
+                )
+        )
+    )
+        throw new IgnisGitError(
+            "INVALID_RESPONSE",
+            "Invalid merge state. Refresh before continuing."
+        );
+    const merging = value.operation === "merge";
+    const unresolved = value.unresolvedPaths.length > 0;
+    if (
+        (merging && (!value.head || !value.mergeHead)) ||
+        (!merging && value.mergeHead !== undefined) ||
+        value.canCommitMerge !== (merging && !unresolved) ||
+        (value.canAbortMerge && !merging) ||
+        (merging
+            ? value.kind !==
+              (unresolved ? "merge-conflicted" : "merge-awaiting-commit")
+            : value.operation === "none"
+              ? unresolved ||
+                !["clean", "diverged"].includes(String(value.kind))
+              : value.kind !== "rebase-or-other")
+    )
+        throw new IgnisGitError(
+            "INVALID_RESPONSE",
+            "Inconsistent merge state. Refresh before continuing."
+        );
+    return value as unknown as MergeState;
+}
+function validOid(value: unknown): boolean {
+    return (
+        typeof value === "string" &&
+        /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)
+    );
+}
+export function fileContent(value: unknown): FileContent {
+    if (
+        !record(value) ||
+        !["text", "missing", "binary", "oversized", "unsupported"].includes(
+            String(value.kind)
+        ) ||
+        (value.kind === "text" &&
+            (typeof value.text !== "string" ||
+                typeof value.hash !== "string" ||
+                !/^[a-f0-9]{64}$/.test(value.hash)))
+    )
+        throw new IgnisGitError(
+            "INVALID_RESPONSE",
+            "Invalid file snapshot returned by Ignis."
+        );
+    return value as unknown as FileContent;
+}
+export function conflictDetails(value: unknown): ConflictDetails {
+    if (
+        !record(value) ||
+        !safePath(value.path) ||
+        typeof value.kind !== "string" ||
+        !Array.isArray(value.availableStages) ||
+        !record(value.contents)
+    )
+        throw new IgnisGitError(
+            "INVALID_RESPONSE",
+            "Invalid conflict details returned by Ignis."
+        );
+    mergeState(value.merge);
+    for (const source of ["base", "ours", "theirs", "worktree"])
+        fileContent(value.contents[source]);
+    return value as unknown as ConflictDetails;
 }

@@ -224,6 +224,7 @@ describe("IgnisGitManager", () => {
         const cancelled = expect(
             manager.checkRequirements()
         ).rejects.toMatchObject({ code: "ABORTED" });
+        await Promise.resolve();
         manager.unload();
         await cancelled;
     });
@@ -247,7 +248,6 @@ describe("IgnisGitManager", () => {
             () => manager.init(),
             () => manager.clone(),
             () => manager.log(),
-            () => manager.show(),
             () => manager.fetch(),
             () => manager.setConfig(),
             () => manager.updateBasePath(),

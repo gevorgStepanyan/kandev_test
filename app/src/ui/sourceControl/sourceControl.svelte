@@ -1,4 +1,5 @@
 <script lang="ts">
+    import type { MergeState } from "src/gitManager/mergeWorkflow";
     import { isIgnis } from "src/platform/ignis";
     import { Menu, Platform, Scope, setIcon } from "obsidian";
     import { SOURCE_CONTROL_VIEW_CONFIG } from "src/constants";
@@ -32,6 +33,7 @@
     let repositoryMissing = $state(false);
     let setupInProgress = $state(false);
     let mergeInProgress = $state(false);
+    let mergeState: MergeState | undefined = $state();
     let status: Status | undefined = $state();
     let lastPulledFiles: FileStatusResult[] = $state([]);
     let commitMessage = $derived(plugin.settings.commitMessage);
@@ -158,8 +160,13 @@
     });
 
     function getCommitActionDescription(sync: boolean): string {
-        if (isIgnis() && mergeInProgress)
-            return "Finish or abort the in-progress Git operation outside Ignis before committing";
+        if (
+            mergeState?.operation !== undefined &&
+            !["none", "merge"].includes(mergeState.operation)
+        )
+            return "Finish this rebase or other Git operation outside Ignis";
+        if (isIgnis() && mergeState?.canCommitMerge)
+            return "Finish merge (commit staged resolutions)";
         const suffix = sync ? " and sync" : "";
         if (hasConflicts) {
             return "Resolve conflicts before committing";
@@ -185,9 +192,15 @@
     }
 
     function canCommit(mode: CommitMode): boolean {
-        if (isIgnis() && (loading || committing || mergeInProgress))
+        if (
+            isIgnis() &&
+            (loading ||
+                committing ||
+                (mergeInProgress && !mergeState?.canCommitMerge))
+        )
             return false;
         if (hasConflicts) return false;
+        if (isIgnis() && mergeState?.canCommitMerge) return true;
         if (mode === "staged") return stagedCount > 0;
         if (mode === "all") return hasChanges;
         return (
@@ -311,6 +324,7 @@
 
         status = plugin.cachedStatus;
         mergeInProgress = plugin.state.mergeInProgress;
+        mergeState = await plugin.gitManager.mergeWorkflow?.getMergeState();
         loading = false;
         if (
             plugin.lastPulledFiles &&
@@ -589,6 +603,33 @@
             {/if}
         </div>
     </div>
+    {#if mergeState?.kind === "diverged"}
+        <button
+            disabled={loading || committing}
+            onclick={() =>
+                plugin.promiseQueue.addTask(() =>
+                    plugin.gitActions.mergeIncomingChanges()
+                )}>Merge incoming changes</button
+        >
+    {:else if mergeState?.operation === "merge"}
+        <p>
+            {mergeState.unresolvedPaths.length
+                ? `${mergeState.unresolvedPaths.length} unresolved Git paths. Save and mark each resolved.`
+                : "All paths resolved; finish merge with Commit."}
+        </p>
+        <button
+            disabled={loading || committing}
+            onclick={() =>
+                plugin.promiseQueue.addTask(() =>
+                    plugin.gitActions.abortMerge()
+                )}>Abort merge</button
+        >
+    {:else if mergeState && mergeState.operation !== "none"}
+        <p>
+            {mergeState.operation} in progress. Inspect status and diffs; finish this
+            operation outside Ignis.
+        </p>
+    {/if}
     <div class="git-commit-msg">
         <textarea
             {rows}

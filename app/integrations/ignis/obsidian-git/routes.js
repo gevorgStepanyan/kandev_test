@@ -68,6 +68,63 @@ function mountRoutes(router, service, options) {
                 });
             }
         };
+    for (const [route, method, fields] of [
+        ["/merge-state", "mergeState", []],
+        ["/diff", "fileDiff", ["path", "kind"]],
+        ["/content", "fileContent", ["path", "source"]],
+        ["/conflicts", "conflictDetails", ["path"]],
+    ])
+        router.get(
+            route,
+            handle((id, input) => service[method](id, input), fields)
+        );
+    for (const [route, action, fields] of [
+        ["/merge", "start", ["expectedHead", "expectedUpstream", "confirmed"]],
+        [
+            "/merge/abort",
+            "abort",
+            ["expectedHead", "expectedMergeHead", "confirmed"],
+        ],
+        [
+            "/mark-resolved",
+            "resolve",
+            [
+                "path",
+                "expectedHead",
+                "expectedMergeHead",
+                "expectedHash",
+                "confirmed",
+                "delete",
+                "allowMarkers",
+            ],
+        ],
+    ])
+        router.post(
+            route,
+            handle(async (id, input) => {
+                let result;
+                try {
+                    result = await service.mergeAction(id, action, input);
+                } catch (error) {
+                    try {
+                        await options.reconcile(id);
+                    } catch {
+                        /* original mutation error remains authoritative */
+                    }
+                    throw error;
+                }
+                try {
+                    await options.reconcile(id);
+                } catch {
+                    return {
+                        ...result,
+                        refreshWarning:
+                            "Git state changed, but vault reconciliation failed. Use Ignis: Refresh vault from disk.",
+                    };
+                }
+                return result;
+            }, fields)
+        );
     router.get(
         "/health",
         handle((id) => service.health(id))
@@ -89,7 +146,19 @@ function mountRoutes(router, service, options) {
     router.post(
         "/commit",
         handle(
-            (id, input) => service.commit(id, input),
+            async (id, input) => {
+                const result = await service.commit(id, input);
+                try {
+                    await options.reconcile(id);
+                } catch {
+                    return {
+                        ...result,
+                        refreshWarning:
+                            "Commit completed, but vault reconciliation failed. Use Ignis: Refresh vault from disk.",
+                    };
+                }
+                return result;
+            },
             ["mode", "message", "amend", "autoStageOnEmptyIndex"]
         )
     );

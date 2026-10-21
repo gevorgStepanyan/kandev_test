@@ -305,3 +305,16 @@ requires a separate formatter check. Build changes also require `pnpm run build`
 When extending the plugin, choose the owning layer first, preserve mobile
 capability guards and path/ref conventions, serialize mutations, and check
 cleanup during both normal unload and settings reload.
+
+## Ignis conflict workflow additions
+
+`src/gitManager/mergeWorkflow.ts` defines an optional manager capability for
+server-authoritative operation state, stage snapshots and explicit merge,
+resolution and abort. `ignisGitClient.ts` validates its typed responses.
+`integrations/ignis/obsidian-git/merge.js` implements native read-only diffs/content,
+Git-stage/state inspection, non-auto-committing merges, verified per-file staging
+and conservative abort under the existing service lock. `commit.js` completes
+resolved merges through the existing Commit handler. The Source Control pane,
+`IgnisConflictModal`, existing diff views and shared conflict editor extensions
+expose the workflow. See the integration's `CONFLICTS.md` and root
+`TESTING_conflicts.md` for the contract, discovery inventory and acceptance checks.

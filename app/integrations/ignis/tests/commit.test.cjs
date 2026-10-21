@@ -416,6 +416,12 @@ test("Commit reuses staging, status, outgoing count and Pull without network ope
         "remote.origin.url",
         "ssh://unreachable.invalid/never-contact"
     );
+    git(
+        repo,
+        "config",
+        "remote.origin.fetch",
+        "+refs/heads/*:refs/remotes/origin/*"
+    );
     git(repo, "config", "branch.main.remote", "origin");
     git(repo, "config", "branch.main.merge", "refs/heads/main");
     await write("new.md", "new\n");

@@ -1,4 +1,4 @@
-import { isIgnis, IGNIS_FUTURE_FEATURE_NOTICE } from "src/platform/ignis";
+import { isIgnis } from "src/platform/ignis";
 import { html } from "diff2html";
 import type { EventRef, ViewStateResult, WorkspaceLeaf } from "obsidian";
 import { ItemView, Platform } from "obsidian";
@@ -22,6 +22,12 @@ export default class DiffView extends ItemView {
         this.parser = new DOMParser();
         this.navigation = true;
         this.contentEl.addClass("git-diff");
+        this.gitViewRefreshRef = this.app.workspace.on(
+            "obsidian-git:head-change",
+            () => {
+                void this.refresh();
+            }
+        );
         this.gitRefreshRef = this.app.workspace.on(
             "obsidian-git:status-changed",
             () => {
@@ -49,10 +55,6 @@ export default class DiffView extends ItemView {
     }
 
     async setState(state: DiffViewState, _: ViewStateResult): Promise<void> {
-        if (isIgnis()) {
-            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
-            return;
-        }
         this.state = state;
 
         if (Platform.isMobile) {
@@ -74,19 +76,11 @@ export default class DiffView extends ItemView {
     }
 
     async onOpen(): Promise<void> {
-        if (isIgnis()) {
-            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
-            return;
-        }
         await this.refresh();
         return super.onOpen();
     }
 
     async refresh(): Promise<void> {
-        if (isIgnis()) {
-            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
-            return;
-        }
         if (this.state?.bFile && !this.gettingDiff && this.plugin.gitManager) {
             this.gettingDiff = true;
             try {
@@ -100,6 +94,12 @@ export default class DiffView extends ItemView {
                 const vaultPath = this.plugin.gitManager.getRelativeVaultPath(
                     this.state.bFile
                 );
+                if (!diff && isIgnis()) {
+                    this.contentEl.setText(
+                        "No differences in this server working-tree/index comparison."
+                    );
+                    return;
+                }
                 if (!diff) {
                     if (
                         this.plugin.gitManager instanceof SimpleGit &&
@@ -130,8 +130,12 @@ export default class DiffView extends ItemView {
                 if (diff) {
                     const diffEl = this.parser
                         .parseFromString(html(diff), "text/html")
-                        .querySelector(".d2h-file-diff");
-                    this.contentEl.append(diffEl!);
+                        .querySelector(".d2h-file-wrapper");
+                    if (diffEl) this.contentEl.append(diffEl);
+                    else
+                        this.contentEl.setText(
+                            "No textual differences in this comparison."
+                        );
                 } else {
                     const div = this.contentEl.createDiv({
                         cls: "obsidian-git-center",
@@ -145,6 +149,11 @@ export default class DiffView extends ItemView {
                         text: "File not found: " + this.state.bFile,
                     });
                 }
+            } catch (error) {
+                this.contentEl.setText(
+                    error instanceof Error ? error.message : String(error)
+                );
+                this.plugin.displayError(error);
             } finally {
                 this.gettingDiff = false;
             }

@@ -1,9 +1,18 @@
-import { StateField, type EditorState, type Range } from "@codemirror/state";
+import { pluginRef } from "src/pluginGlobalRef";
+import { isIgnis } from "src/platform/ignis";
+import {
+    StateEffect,
+    StateField,
+    type EditorState,
+    type Range,
+    type Transaction,
+} from "@codemirror/state";
 import {
     Decoration,
     EditorView,
     showPanel,
     WidgetType,
+    ViewPlugin,
     type DecorationSet,
     type Panel,
     type PanelConstructor,
@@ -18,8 +27,38 @@ import {
 } from "./model";
 
 const CHOICES = ["ours", "base", "theirs", "both"] as const;
+export const refreshConflictState = StateEffect.define<void>();
+
+const conflictStateListener = ViewPlugin.define((view) => {
+    const workspace = pluginRef.plugin?.app.workspace;
+    const refresh = () =>
+        view.dispatch({ effects: refreshConflictState.of(undefined) });
+    const events =
+        isIgnis() && workspace
+            ? [
+                  workspace.on("obsidian-git:status-changed", refresh),
+                  workspace.on("obsidian-git:head-change", refresh),
+              ]
+            : [];
+    return {
+        destroy: () => events.forEach((event) => workspace?.offref(event)),
+    };
+});
+
+function needsConflictRefresh(transaction: Transaction): boolean {
+    return (
+        transaction.docChanged ||
+        transaction.reconfigured ||
+        transaction.effects.some((effect) => effect.is(refreshConflictState))
+    );
+}
 
 function computeBlocks(state: EditorState): readonly ConflictBlock[] {
+    if (
+        isIgnis() &&
+        !pluginRef.plugin?.gitManager?.mergeWorkflow?.canResolveTextConflicts
+    )
+        return [];
     if (!state.field(editorLivePreviewField, false)) {
         return [];
     }
@@ -30,7 +69,7 @@ function computeBlocks(state: EditorState): readonly ConflictBlock[] {
 export const conflictBlocksField = StateField.define<readonly ConflictBlock[]>({
     create: computeBlocks,
     update: (value, transaction) =>
-        transaction.docChanged || transaction.reconfigured
+        needsConflictRefresh(transaction)
             ? computeBlocks(transaction.state)
             : value,
 });
@@ -99,6 +138,7 @@ function renderConflictSummary(root: HTMLElement, view: EditorView): void {
         cls: "git-conflict-panel-label",
         text: `${blocks.length} conflict${blocks.length === 1 ? "" : "s"} in file`,
     });
+    if (isIgnis()) return;
     const labels: Partial<Record<ConflictChoice, string>> = {
         ours: "Keep all ours",
         theirs: "Keep all theirs",
@@ -217,7 +257,7 @@ function buildDecorations(state: EditorState): DecorationSet {
 export const conflictMarkersField = StateField.define<DecorationSet>({
     create: (state) => buildDecorations(state),
     update: (value, transaction) =>
-        transaction.docChanged || transaction.reconfigured
+        needsConflictRefresh(transaction)
             ? buildDecorations(transaction.state)
             : value,
     provide: (field) => EditorView.decorations.from(field),
@@ -232,10 +272,7 @@ class ConflictPanel implements Panel {
     }
 
     update(update: ViewUpdate): void {
-        if (
-            update.docChanged ||
-            update.transactions.some((t) => t.reconfigured)
-        ) {
+        if (update.transactions.some(needsConflictRefresh)) {
             this.render();
         }
     }
@@ -260,6 +297,7 @@ const conflictPanel = showPanel.compute([conflictBlocksField], (state) =>
 );
 
 export const conflictExtensions = [
+    conflictStateListener,
     conflictBlocksField,
     conflictMarkersField,
     conflictPanel,

@@ -164,7 +164,14 @@ export default class ObsidianGit extends Plugin {
         if (
             this.settings.changedFilesInStatusBar ||
             gitViews.some((leaf) => !(leaf.isDeferred ?? false)) ||
-            historyViews.some((leaf) => !(leaf.isDeferred ?? false))
+            historyViews.some((leaf) => !(leaf.isDeferred ?? false)) ||
+            (isIgnis() &&
+                [DIFF_VIEW_CONFIG.type, SPLIT_DIFF_VIEW_CONFIG.type].some(
+                    (type) =>
+                        this.app.workspace
+                            .getLeavesOfType(type)
+                            .some((leaf) => !(leaf.isDeferred ?? false))
+                ))
         ) {
             await this.updateCachedStatus().catch((e) => this.displayError(e));
         }
@@ -254,6 +261,21 @@ export default class ObsidianGit extends Plugin {
      * This mustn't depend on the plugin's settings.
      */
     registerStuff(): void {
+        if (isIgnis()) {
+            const unsubscribe = window.__ignis?.ws?.onStateChange((state) => {
+                if (state === "open" && this.gitReady)
+                    this.app.workspace.trigger("obsidian-git:refresh");
+            });
+            if (unsubscribe) this.register(unsubscribe);
+            this.registerDomEvent(window, "online", () => {
+                if (this.gitReady)
+                    this.app.workspace.trigger("obsidian-git:refresh");
+            });
+            this.registerDomEvent(window, "focus", () => {
+                if (this.gitReady)
+                    this.app.workspace.trigger("obsidian-git:refresh");
+            });
+        }
         this.registerEvent(
             this.app.workspace.on("obsidian-git:refresh", () => {
                 this.refresh().catch((e) => this.displayError(e));
@@ -648,9 +670,14 @@ export default class ObsidianGit extends Plugin {
                         this.settings.autoPullOnBoot &&
                         !pausedAutomatics
                     ) {
-                        this.promiseQueue.addTask(() =>
-                            this.gitActions.pullChangesFromRemote()
-                        );
+                        this.promiseQueue.addTask(async () => {
+                            if (
+                                isIgnis() &&
+                                (await this.gitManager.isMergeInProgress())
+                            )
+                                return;
+                            await this.gitActions.pullChangesFromRemote();
+                        });
                     }
 
                     if (!pausedAutomatics) {

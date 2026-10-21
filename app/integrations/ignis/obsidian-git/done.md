@@ -26,7 +26,7 @@
 - Index operations validate paths and select changes from authoritative server-side status inside the repository lock. Absolute paths, traversal, empty path components, NUL bytes, backslashes, and Git metadata paths are rejected.
 - Staging supports additions, modifications, deletions, and directory scopes using literal changed-file paths. Ignored files are not force-added, and `git_conflict.md` is excluded from bulk operations and rejected as a direct target.
 - Unstaging preserves working files and works both with an existing HEAD and before the first commit. File actions on staged renames include both old and new paths; directory actions retain their subtree boundary.
-- Operations targeting unresolved index entries fail with `UNMERGED_PATH`; native index-lock failures return `GIT_INDEX_LOCKED`. Index operations do not resolve conflicts or clear conflict reports.
+- Bulk operations targeting unresolved index entries fail with `UNMERGED_PATH`; explicit per-file resolution is described below; native index-lock failures return `GIT_INDEX_LOCKED`. Ordinary index operations do not resolve conflicts; the confirmed Mark resolved handler stages one validated resolution. Reports remain diagnostic history.
 - Successful operations, including valid no-ops, return `status: "updated"` and the operation/scope. They change the index without creating commits, updating HEAD, contacting remotes, or requesting vault filesystem reconciliation.
 
 ## Browser plugin
@@ -34,15 +34,40 @@
 - Runtime detection selects `IgnisGitManager`, with same-origin HTTP transport, response validation, cached repository state, request timeouts, and cancellation on unload (`src/platform/ignis.ts`, `src/gitManager/ignisGit.ts`, and `src/gitManager/ignisGitClient.ts`).
 - Manual and automatic Pull use the existing queued Git actions. Source Control, current-file commands, and file/folder context menus expose staging and unstaging; index requests invalidate cached state and request a status refresh.
 - Pull and staging require the Ignis write-safety API, clean reported write state, and no editable Markdown source panes. Staging records content persisted on the server; the public Ignis API provides no save/flush barrier, so very recent saves may not be included. Unstaging does not require these browser-write restrictions.
-- Unsupported commands, views, and manager operations display the future-feature notice. Push, sync, standalone Fetch, branch/repository/configuration mutations, history/diff views, hunk staging/patches, and discard remain unavailable; automatic commit/sync and Push are disabled.
+- Unsupported commands, views, and manager operations display the future-feature notice. Push, sync, standalone Fetch, branch/repository/configuration mutations, history views, hunk staging/patches, and discard remain unavailable; automatic commit/sync and Push are disabled.
 
 ## Manual Commit
 
 - `POST /api/ext/obsidian-git/commit` supports staged, all and Smart modes using the existing resolver, validation, error envelope, bounded executor and repository lock. Stage-all and commit are one locked operation; Smart reads authoritative index state inside that lock.
-- Commit refuses root/non-owner execution, missing local identity, detached HEAD, unfinished operations, unmerged entries, unsafe index layouts, tracked/staged conflict reports and changed blobs at least 100 MB. Hooks and signing are disabled. The server pins author/committer to trusted local configuration and verifies the resulting HEAD, tree and parent.
+- Commit refuses root/non-owner execution, missing local identity, detached HEAD, unsupported unfinished operations, unmerged entries, unsafe index layouts, tracked/staged conflict reports and changed blobs at least 100 MB. Hooks and signing are disabled. The server pins author/committer to trusted local configuration and verifies the resulting HEAD, tree and parent.
 - Actual distinct changed-path counts include initial commits; rename endpoints count separately. Native failures leave data staged, and ambiguous outcomes never auto-retry. Commit contacts no remote.
 - `IgnisGitManager.commit`, `commitAll` and Ignis-only `commitSmart` use the same transport; message templates run once, scripts fall back with a notice, and successful commits emit HEAD/status refreshes. No-op returns zero and a no-commit result. Source Control and the six existing manual palette commands are enabled; failures/cancellation/no-op preserve the textarea.
 - Stage-all and Smart with fallback enabled retain the existing browser staging safety guard and persisted-content limitations. Staged-only records the index without claiming editor buffers are saved.
 - Amend remains explicitly unsupported because publication cannot be reliably established from cached refs. Push, sync, automatic commits and schedules remain unavailable.
 - The reference server exposes no session/per-user vault authorization API. Existing enabled-vault/origin checks require the deployment's authenticated, single-owner proxy boundary; they are not authentication themselves. See `COMMIT.md`.
-- Frontend/handler/command and real-repository backend tests were generated but not executed locally as requested. `TESTING_commit.md` at the fork root lists exact manual commands; deployment acceptance remains pending.
+- Frontend/handler/command and real-repository backend tests run locally as part of `pnpm run all`. `TESTING_commit.md` and `TESTING_conflicts.md` list manual commands; deployment acceptance remains pending.
+
+## Diffs and explicit merge resolution
+
+- The existing service/router now expose `/diff`, `/content`, `/merge-state`, `/conflicts`, `/merge`, `/mark-resolved` and `/merge/abort`, using the same origin/header/vault validation and repository lock.
+- Pull remains fetch plus fast-forward only. Divergence exposes an explicit confirmed Merge action pinned to the reviewed HEAD/upstream OIDs; dirty trees are rejected. Normal merge uses `--no-commit --no-ff`, preserves true stages and never auto-selects a winner.
+- Status reconstructs merge/rebase/cherry-pick/other state and orphaned unmerged entries from native Git after reload/restart. Unsafe automatic operations remain blocked.
+- Unified and read-only split diffs show actual staged/unstaged snapshots. Text/binary/oversized/missing content is explicit; content sources are a fixed server enum. Status and diff reads disable optional index writes.
+- Existing CodeMirror per-block conflict controls edit through the normal adapter. Reading view, clean write state, browser/server hashes, explicit confirmation and server revalidation gate Mark resolved. Deletion and intentional literal markers require explicit acknowledgement. Complex/binary conflicts retain manual-resolution guidance.
+- Existing Commit completes a resolved normal merge with its staged set, never automatically stages unrelated work, disallows Amend and verifies both parents/tree/final state. Identical resulting trees still create a real merge commit with zero changed files.
+- Confirmed Abort uses a persisted post-merge fingerprint, refuses changed tracked files/index or missing snapshots, invokes only `git merge --abort`, and verifies restored tracked state/HEAD and unrelated untracked bytes. No destructive fallback exists.
+- Reports append state transitions only to unchanged integration-owned untracked files; tracked, edited and user-owned reports are preserved. Git index/metadata remain authoritative.
+- Refreshes cover mutations, file events, reconnect/focus/online and open diff views. Merge-route failures also request Ignis cache reconciliation because Git may already have changed files. Rebase/cherry-pick operations remain inspection-only.
+- See `CONFLICTS.md` for discovery/contracts/limits and root `TESTING_conflicts.md` for local tests and manual deployment acceptance. The `ignis/` reference checkout remains unchanged.
+
+## Local validation for the conflict phase
+
+- `pnpm run all`: passed TypeScript, Svelte (zero errors/warnings), formatting,
+  ESLint, 236 Vitest tests across 18 files, and 91 server tests.
+- `pnpm run test:ignis-bundle`: passed production build and browser initialization
+  smoke check with native process APIs unavailable.
+- Extended integration JavaScript/Markdown formatting and source diff whitespace
+  checks passed. No live deployment-server tests were run.
+- Ready for the disposable-vault manual checklist in `TESTING_conflicts.md`;
+  live editor saves, multi-tab behavior, cache propagation and container restart
+  remain deployment acceptance checks.

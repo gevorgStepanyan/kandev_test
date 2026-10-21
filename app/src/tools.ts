@@ -89,11 +89,9 @@ export default class Tools {
         bRef?: string;
         event?: MouseEvent;
     }) {
-        if (isIgnis()) {
-            this.plugin.displayIgnisFutureFeature();
-            return;
-        }
         let diffStyle = this.plugin.settings.diffStyle;
+        if (isIgnis() && [aRef, bRef].some((ref) => ref?.startsWith(":")))
+            diffStyle = "split";
         if (Platform.isMobileApp) {
             diffStyle = "git_unified";
         }

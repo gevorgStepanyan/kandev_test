@@ -1,4 +1,4 @@
-import { isIgnis, IGNIS_FUTURE_FEATURE_NOTICE } from "src/platform/ignis";
+import { isIgnis, IgnisGitError } from "src/platform/ignis";
 import type { Debouncer, ViewStateResult, WorkspaceLeaf } from "obsidian";
 import { debounce, ItemView, Platform, setIcon } from "obsidian";
 import { DEFAULT_SETTINGS, SPLIT_DIFF_VIEW_CONFIG } from "src/constants";
@@ -62,10 +62,6 @@ export default class SplitDiffView extends ItemView {
         private plugin: ObsidianGit
     ) {
         super(leaf);
-        if (isIgnis()) {
-            this.intervalRef = 0;
-            return;
-        }
         this.navigation = true;
         this.registerEvent(
             this.app.workspace.on("obsidian-git:status-changed", () => {
@@ -74,6 +70,11 @@ export default class SplitDiffView extends ItemView {
                 } else {
                     this.updateRefEditors().catch(console.error);
                 }
+            })
+        );
+        this.registerEvent(
+            this.app.workspace.on("obsidian-git:head-change", () => {
+                void this.createMergeView();
             })
         );
         this.intervalRef = window.setInterval(() => {
@@ -185,10 +186,6 @@ export default class SplitDiffView extends ItemView {
     }
 
     async setState(state: DiffViewState, _: ViewStateResult): Promise<void> {
-        if (isIgnis()) {
-            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
-            return;
-        }
         this.state = state;
 
         if (Platform.isMobile) {
@@ -206,26 +203,28 @@ export default class SplitDiffView extends ItemView {
 
     onClose(): Promise<void> {
         window.clearInterval(this.intervalRef);
+        this.mergeView?.destroy();
+        this.fileSaveDebouncer?.cancel();
         return super.onClose();
     }
 
     async onOpen(): Promise<void> {
-        if (isIgnis()) {
-            this.contentEl.setText(IGNIS_FUTURE_FEATURE_NOTICE);
-            return;
-        }
         await this.createMergeView();
         return super.onOpen();
     }
 
     async gitShow(commitHash: string, file: string): Promise<string> {
         try {
-            return await (this.plugin.gitManager as SimpleGit).show(
-                commitHash,
-                file,
-                false
-            );
+            return await this.plugin.gitManager.show(commitHash, file, false);
         } catch (error) {
+            if (
+                error instanceof IgnisGitError &&
+                error.code === "UNMERGED_PATH" &&
+                commitHash === ""
+            ) {
+                this.indexUnmerged = true;
+                return this.plugin.gitManager.show(":2", file, false);
+            }
             if (error instanceof GitError) {
                 if (
                     commitHash === "" &&
@@ -273,7 +272,7 @@ export default class SplitDiffView extends ItemView {
     }
 
     async bShouldBeEditable(): Promise<boolean> {
-        if (this.state.bRef != undefined) {
+        if (isIgnis() || this.state.bRef != undefined) {
             return false;
         }
         const bVaultPath = this.plugin.gitManager.getRelativeVaultPath(
@@ -283,6 +282,10 @@ export default class SplitDiffView extends ItemView {
     }
 
     async updateModifiableEditor() {
+        if (isIgnis()) {
+            await this.createMergeView();
+            return;
+        }
         if (!this.mergeView || this.refreshing) return;
         const bEditor = this.mergeView.b;
 
@@ -315,6 +318,10 @@ export default class SplitDiffView extends ItemView {
      * So only the non editable editors.
      */
     async updateRefEditors() {
+        if (isIgnis()) {
+            await this.createMergeView();
+            return;
+        }
         if (!this.mergeView || this.refreshing) return;
         const aEditor = this.mergeView.a;
         const bEditor = this.mergeView.b;
@@ -475,6 +482,18 @@ export default class SplitDiffView extends ItemView {
                         this.state.bRef,
                         this.state.bFile
                     );
+                } else if (this.plugin.gitManager.mergeWorkflow) {
+                    const snapshot =
+                        await this.plugin.gitManager.mergeWorkflow.getFileContent(
+                            this.state.bFile,
+                            "worktree"
+                        );
+                    if (snapshot.kind !== "text" && snapshot.kind !== "missing")
+                        throw new IgnisGitError(
+                            "NON_TEXT_DIFF",
+                            "This file cannot be displayed as text."
+                        );
+                    bText = snapshot.text ?? "";
                 } else {
                     const bVaultPath =
                         this.plugin.gitManager.getRelativeVaultPath(
@@ -569,6 +588,12 @@ export default class SplitDiffView extends ItemView {
                     },
                     parent: container,
                 });
+            } catch (error) {
+                this.mergeView = undefined;
+                this.contentEl.setText(
+                    error instanceof Error ? error.message : String(error)
+                );
+                this.plugin.displayError(error);
             } finally {
                 this.refreshing = false;
             }

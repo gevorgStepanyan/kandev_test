@@ -92,6 +92,9 @@ describe("Ignis automatic routines", () => {
                 commit: vi.fn(),
                 push: vi.fn(),
             },
+            gitManager: {
+                isMergeInProgress: vi.fn().mockResolvedValue(false),
+            },
         });
         const manager = new AutomaticsManager(plugin);
         try {
@@ -100,6 +103,16 @@ describe("Ignis automatic routines", () => {
             expect(vi.getTimerCount()).toBe(1);
             await vi.advanceTimersByTimeAsync(60 * 60000);
             expect(pull).toHaveBeenCalledOnce();
+            vi.mocked(plugin.gitManager.isMergeInProgress).mockResolvedValue(
+                true
+            );
+            await vi.advanceTimersByTimeAsync(60 * 60000);
+            expect(pull).toHaveBeenCalledOnce();
+            vi.mocked(plugin.gitManager.isMergeInProgress).mockResolvedValue(
+                false
+            );
+            await vi.advanceTimersByTimeAsync(60 * 60000);
+            expect(pull).toHaveBeenCalledTimes(2);
             expect(plugin.gitActions.commit).not.toHaveBeenCalled();
             expect(plugin.gitActions.push).not.toHaveBeenCalled();
         } finally {

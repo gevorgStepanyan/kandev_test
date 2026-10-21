@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import SplitDiffView, { getSplitDiffTimeout } from "src/ui/diff/splitDiffView";
 import type { DiffViewState } from "src/types";
+import { IgnisGitError } from "src/platform/ignis";
 import { withCleanup } from "../../helpers/cleanup";
 import {
     createRepoWithMergeConflict,
@@ -142,6 +143,38 @@ function createView(state: Partial<DiffViewState>) {
 }
 
 describe("SplitDiffView", () => {
+    it("keeps Ignis working-tree comparisons read-only and refreshes server snapshots", async () => {
+        window.__ignis = { version: "test" };
+        try {
+            const { view, read } = createView({ bRef: undefined });
+            const recreate = vi
+                .spyOn(view, "createMergeView")
+                .mockResolvedValue();
+            expect(await view.bShouldBeEditable()).toBe(false);
+            await view.updateRefEditors();
+            await view.updateModifiableEditor();
+            expect(recreate).toHaveBeenCalledTimes(2);
+            expect(read).not.toHaveBeenCalled();
+        } finally {
+            delete window.__ignis;
+        }
+    });
+
+    it("uses the real ours stage when the Ignis index is unmerged", async () => {
+        const { view } = createView({ bRef: undefined });
+        const show = vi
+            .fn()
+            .mockRejectedValueOnce(
+                new IgnisGitError("UNMERGED_PATH", "No stage zero")
+            )
+            .mockResolvedValueOnce("ours\n");
+        Object.assign(view, { plugin: { gitManager: { show } } });
+        expect(await view.gitShow("", "note.md")).toBe("ours\n");
+        expect(show.mock.calls).toEqual([
+            ["", "note.md", false],
+            [":2", "note.md", false],
+        ]);
+    });
     it("matches the working tree file by its vault path", () => {
         const { view } = createView({ bRef: undefined });
 
