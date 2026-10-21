@@ -71,3 +71,20 @@
 - Ready for the disposable-vault manual checklist in `TESTING_conflicts.md`;
   live editor saves, multi-tab behavior, cache propagation and container restart
   remain deployment acceptance checks.
+
+## Sidebar wiring verification
+
+- Rendered Svelte tests now click actual staged/conflicted filenames in flat and
+  tree layouts through Tools, GitActions and IgnisGitManager. Unified and split
+  staged comparisons reach the correct read-only endpoints; text conflicts open
+  live preview. `happy-dom` is a development-only test dependency.
+- Diff-pane opening failures are now reported. Unknown stored diff styles fall
+  back to split; Ignis stage comparisons retain split routing on mobile.
+- The generated-bundle smoke test exercises staged diffs and conflict opening,
+  beyond backend initialization. Local validation passes 248 Vitest tests, 91
+  server tests, TypeScript, Svelte, lint and formatting.
+- The reported generic unsupported notice was not reproduced with the current
+  source UI. `TESTING_conflicts.md` now documents checking the loaded browser
+  capabilities, reconciling externally replaced plugin artifacts, and reloading
+  the running plugin. A live-instance diagnostic is needed to distinguish stale
+  code from a deployment-specific failure.

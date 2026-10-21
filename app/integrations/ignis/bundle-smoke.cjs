@@ -6,11 +6,14 @@ const vm = require("node:vm");
 const fs = require("node:fs");
 const req = createRequire(path.join(root, "package.json"));
 const stubModule = { exports: {} };
+const obsidianArrayExtensions =
+    "Array.prototype.last = function () { return this[this.length - 1]; };\n";
 vm.runInNewContext(
-    transformSync(
-        fs.readFileSync(path.join(root, "tests/stubs/obsidian.ts"), "utf8"),
-        { loader: "ts", format: "cjs" }
-    ).code,
+    obsidianArrayExtensions +
+        transformSync(
+            fs.readFileSync(path.join(root, "tests/stubs/obsidian.ts"), "utf8"),
+            { loader: "ts", format: "cjs" }
+        ).code,
     {
         module: stubModule,
         exports: stubModule.exports,
@@ -39,12 +42,28 @@ const win = {
     setInterval,
     clearInterval,
 };
+const openedFiles = [];
 const app = {
     workspace: {
         trigger() {},
         iterateAllLeaves() {},
         getLeavesOfType() {
             return [];
+        },
+        getLeaf() {
+            return {
+                async openFile(file, options) {
+                    openedFiles.push({ file, options });
+                },
+            };
+        },
+    },
+    vault: {
+        getAbstractFileByPath() {
+            return Object.assign(new obsidian.TFile(), {
+                path: "note.md",
+                extension: "md",
+            });
         },
     },
     loadLocalStorage() {
@@ -87,12 +106,57 @@ const context = {
     AbortController,
     Response,
     localStorage: { debug: "-simple-git" },
-    fetch: async () => new Response(JSON.stringify({ requirements: "valid" })),
+    fetch: async (url) => {
+        if (url.includes("/diff?")) {
+            if (!url.includes("kind=staged"))
+                throw new Error("Staged diff wiring regression");
+            return new Response(
+                JSON.stringify({ kind: "text", diff: "staged patch" })
+            );
+        }
+        if (url.includes("/conflicts?")) {
+            const value = {
+                kind: "text",
+                text: "conflict",
+                hash: "c".repeat(64),
+            };
+            return new Response(
+                JSON.stringify({
+                    path: "note.md",
+                    kind: "content",
+                    availableStages: [1, 2, 3],
+                    merge: {
+                        operation: "merge",
+                        kind: "merge-conflicted",
+                        head: "a".repeat(40),
+                        mergeHead: "b".repeat(40),
+                        unresolvedPaths: [
+                            {
+                                path: "note.md",
+                                kind: "content",
+                                availableStages: [1, 2, 3],
+                            },
+                        ],
+                        canCommitMerge: false,
+                        canAbortMerge: true,
+                    },
+                    contents: {
+                        base: value,
+                        ours: value,
+                        theirs: value,
+                        worktree: value,
+                    },
+                })
+            );
+        }
+        return new Response(JSON.stringify({ requirements: "valid" }));
+    },
 };
 context.global = context;
 try {
     vm.runInNewContext(
-        fs.readFileSync(path.join(root, "main.js"), "utf8"),
+        obsidianArrayExtensions +
+            fs.readFileSync(path.join(root, "main.js"), "utf8"),
         context
     );
 } catch (e) {
@@ -116,11 +180,30 @@ plugin.settings = {
 plugin.refresh = async () => {};
 plugin
     .init({ fromReload: false })
-    .then(() => {
+    .then(async () => {
         if (!plugin.gitReady || spawned || plugin.useSimpleGit)
             throw new Error("Ignis native initialization regression");
         console.log(
             "Production bundle selected Ignis backend without spawning native Git."
+        );
+        if (
+            (await plugin.gitManager.getDiffString("note.md", true)) !==
+            "staged patch"
+        )
+            throw new Error(
+                "Production bundle did not expose staged diff support"
+            );
+        await plugin.gitActions.openConflict("note.md");
+        if (
+            openedFiles.length !== 1 ||
+            openedFiles[0].options.state.mode !== "source" ||
+            openedFiles[0].options.state.source !== false
+        )
+            throw new Error(
+                "Production bundle did not open the conflict editor in live preview"
+            );
+        console.log(
+            "Production bundle opened the Ignis staged diff and conflict editor."
         );
     })
     .catch((e) => {

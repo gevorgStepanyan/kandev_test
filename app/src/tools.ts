@@ -90,11 +90,12 @@ export default class Tools {
         event?: MouseEvent;
     }) {
         let diffStyle = this.plugin.settings.diffStyle;
-        if (isIgnis() && [aRef, bRef].some((ref) => ref?.startsWith(":")))
-            diffStyle = "split";
         if (Platform.isMobileApp) {
             diffStyle = "git_unified";
         }
+        // Stage snapshots need the split renderer, including Ignis on mobile.
+        if (isIgnis() && [aRef, bRef].some((ref) => ref?.startsWith(":")))
+            diffStyle = "split";
 
         const state: DiffViewState = {
             aFile: aFile,
@@ -103,18 +104,24 @@ export default class Tools {
             bRef: bRef,
         };
 
-        if (diffStyle == "split") {
-            void getNewLeaf(this.plugin.app, event)?.setViewState({
-                type: SPLIT_DIFF_VIEW_CONFIG.type,
-                active: true,
-                state: state,
-            });
-        } else if (diffStyle == "git_unified") {
-            void getNewLeaf(this.plugin.app, event)?.setViewState({
-                type: DIFF_VIEW_CONFIG.type,
-                active: true,
-                state: state,
-            });
+        try {
+            const leaf = getNewLeaf(this.plugin.app, event);
+            if (!leaf)
+                throw new Error(
+                    "No editor pane is available to open this diff."
+                );
+            void leaf
+                .setViewState({
+                    type:
+                        diffStyle === "git_unified"
+                            ? DIFF_VIEW_CONFIG.type
+                            : SPLIT_DIFF_VIEW_CONFIG.type,
+                    active: true,
+                    state: state,
+                })
+                .catch((error) => this.plugin.displayError(error));
+        } catch (error) {
+            this.plugin.displayError(error);
         }
     }
 

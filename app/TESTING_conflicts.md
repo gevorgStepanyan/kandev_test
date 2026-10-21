@@ -136,3 +136,50 @@ A finished merge has two parents; `ls-files -u` is empty. Confirm the report
 appends the corresponding completion/abort event and remains excluded. Remove
 the disposable vault from Ignis and delete only the recorded fixture paths when
 finished. Live deployment/editor/cache behavior remains a manual acceptance step.
+
+## Verify the browser loaded the diff/conflict UI
+
+The browser bundle and server integration are separate installations. The built
+root `main.js` belongs in the **active vault's**
+`.obsidian/plugins/obsidian-git/main.js`; replacing the server integration alone
+does not update the sidebar UI. The plugin manifest version can stay the same
+between development builds and is insufficient to identify the loaded code.
+
+After copying the browser artifacts, run **Ignis: Refresh vault from disk** to
+reconcile externally replaced files (including ignored plugin artifacts). Wait
+for refresh to complete, then disable/re-enable the Git community plugin or
+reload the browser. Ignis has a filesystem content cache as well as the running
+Obsidian plugin instance; replacing a file on disk does not update either one
+by itself.
+
+In the browser developer console, inspect capabilities without reading vault
+contents:
+
+```js
+(() => {
+    const plugin = app.plugins.plugins["obsidian-git"];
+    console.log({
+        version: plugin?.manifest?.version,
+        conflictClick: typeof plugin?.gitActions?.openConflict,
+        mergeWorkflow: !!plugin?.gitManager?.mergeWorkflow,
+        serverDiff: plugin?.gitManager?.getDiffString
+            ?.toString()
+            .includes("diff?path="),
+        diffOpener: plugin?.tools?.openDiff?.toString(),
+    });
+})();
+```
+
+The current Ignis implementation has `conflictClick: "function"`,
+`mergeWorkflow: true`, and `serverDiff: true`. The diff opener must route to a
+diff view rather than immediately call the future-feature notice in Ignis.
+If these differ, capture the output and verify the active vault/plugin artifact
+path. If they match and a click still fails, capture the browser console error
+and the `/api/ext/obsidian-git/diff`, `/content` or `/conflicts` request response.
+Do not include credentials, cookies or private note contents.
+
+`tests/ui/sourceControl/clicks.test.ts` renders the real Svelte rows in a DOM and
+clicks filenames in flat/tree layouts through the real Tools, GitActions and
+Ignis manager. It covers unified/staged split rendering, conflict editor opening,
+and pane-opening error reporting. `pnpm run test:ignis-bundle` also checks staged
+diff and conflict-editor actions in the actual generated `main.js`.
