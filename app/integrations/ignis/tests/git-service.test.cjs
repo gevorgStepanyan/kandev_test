@@ -98,6 +98,8 @@ for (const mode of ["modified", "staged", "untracked"])
             service.pull("Main"),
             (e) =>
                 e.code === "PULL_BLOCKED_DIRTY" &&
+                e.message ===
+                    "Please stage and commit your local changes before pulling." &&
                 e.reportFile === "git_conflict.md"
         );
         assert.equal(git(repo, "rev-parse", "HEAD"), head);
@@ -108,7 +110,7 @@ for (const mode of ["modified", "staged", "untracked"])
         );
         assert.match(
             await fs.readFile(path.join(repo, "git_conflict.md"), "utf8"),
-            /Local changes prevent/
+            /Please stage and commit your local changes before pulling\./
         );
         assert.equal(
             git(repo, "check-ignore", "git_conflict.md"),

@@ -904,9 +904,11 @@ class GitService {
                 throw new GitServiceError(
                     code,
                     message +
-                        (reportFile
-                            ? " See git_conflict.md."
-                            : " An existing git_conflict.md was preserved."),
+                        (code === "PULL_BLOCKED_DIRTY"
+                            ? ""
+                            : reportFile
+                              ? " See git_conflict.md."
+                              : " An existing git_conflict.md was preserved."),
                     409,
                     reportFile
                 );
@@ -920,7 +922,7 @@ class GitService {
             if (status.all.length)
                 await block(
                     "PULL_BLOCKED_DIRTY",
-                    "Local changes prevent a safe pull; unsafe to merge due to local changes."
+                    "Please stage and commit your local changes before pulling."
                 );
             if (!branch.current || !branch.tracking || !local)
                 throw new GitServiceError(
