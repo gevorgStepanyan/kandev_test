@@ -645,9 +645,11 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
         return value;
     }
     async getConflictDetails(path: string) {
-        return conflictDetails(
+        const details = conflictDetails(
             await this.request(`conflicts?path=${encodeURIComponent(path)}`)
         );
+        this.canResolveTextConflicts = details.merge.operation === "merge";
+        return details;
     }
     private async confirm(
         action: string,

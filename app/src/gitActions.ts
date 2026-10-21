@@ -42,6 +42,7 @@ import { GeneralModal } from "./ui/modals/generalModal";
 import {
     convertPathToAbsoluteGitignoreRule,
     formatRemoteUrl,
+    getNewLeaf,
     spawnAsync,
     splitRemoteBranch,
 } from "./utils";
@@ -946,6 +947,44 @@ export class GitActions {
     }
     reviewConflict(path: string): void {
         new IgnisConflictModal(this.plugin, path).open();
+    }
+    async openConflict(path: string, event?: MouseEvent): Promise<void> {
+        await this.runReadyGitAction(async () => {
+            const manager = this.plugin.gitManager;
+            const workflow = manager.mergeWorkflow;
+            if (!workflow) throw new IgnisUnsupportedGitFeatureError();
+            const details = await workflow.getConflictDetails(path);
+            if (
+                details.merge.operation === "merge" &&
+                ["content", "modify-delete", "add-add"].includes(
+                    details.kind
+                ) &&
+                details.contents.worktree.kind === "text"
+            ) {
+                const file = this.plugin.app.vault.getAbstractFileByPath(
+                    manager.getRelativeVaultPath(path)
+                );
+                if (file instanceof TFile) {
+                    const leaf = getNewLeaf(this.plugin.app, event);
+                    if (!leaf)
+                        throw new Error(
+                            "No editor pane is available to open this conflict."
+                        );
+                    await leaf.openFile(file, {
+                        active: true,
+                        state: { mode: "source", source: false },
+                    });
+                    // Also refresh controls if this file was already open and
+                    // openFile reused its existing CodeMirror state.
+                    this.plugin.app.workspace.trigger("obsidian-git:refresh");
+                    return;
+                }
+                this.plugin.displayMessage(
+                    "The conflict file is on the server but is not available in the browser vault yet. Use Ignis: Refresh vault from disk, then open it again. Showing Git stages for review."
+                );
+            }
+            this.reviewConflict(path);
+        }, true);
     }
     async markResolved(path: string): Promise<void> {
         await this.runReadyGitAction(async () => {

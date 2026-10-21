@@ -88,7 +88,10 @@ Disable other Git jobs for this disposable vault while verifying this workflow.
       after reviewing state.
 - [ ] Conflicts lists `note.md`. Review base/ours/theirs and working resolution;
       compare using split diff. Confirm base=`base`, ours=`ours`, theirs=`theirs`.
-- [ ] Open the note in live preview. Keep ours/theirs/both/base and manual edits
+- [ ] Click the conflicted filename in both flat and tree layouts. It opens the
+      note in live preview, including when reading view is the default. A missing
+      browser-cache file must show stage review and refresh guidance rather than
+      silently doing nothing. Keep ours/theirs/both/base and manual edits
       use the ordinary editor/undo/save path. Mark resolved while an editable pane
       is open is blocked; switch to reading view and wait for successful saves.
 - [ ] Remaining markers block ordinary resolution unless explicitly acknowledged

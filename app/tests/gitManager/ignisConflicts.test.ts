@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { sha256 } from "js-sha256";
-import { MarkdownView } from "obsidian";
+import { MarkdownView, TFile } from "obsidian";
 import { IgnisGitManager } from "src/gitManager/ignisGit";
 import { GitActions } from "src/gitActions";
 import type { MergeState } from "src/gitManager/mergeWorkflow";
@@ -152,6 +152,94 @@ describe("Ignis diff transport", () => {
     });
 });
 describe("explicit merge workflow", () => {
+    function conflictOpening() {
+        const context = setup();
+        const { plugin } = context;
+        Object.assign(plugin, {
+            isAllInitialized: vi.fn().mockResolvedValue(true),
+        });
+        const openFile = vi.fn().mockResolvedValue(undefined);
+        const getLeaf = vi.fn(() => ({ openFile }));
+        const file = Object.assign(new TFile(), {
+            path: "note.md",
+            name: "note.md",
+            extension: "md",
+        });
+        const getAbstractFileByPath = vi.fn().mockReturnValue(file);
+        Object.assign(plugin.app.vault, { getAbstractFileByPath });
+        Object.assign(plugin.app.workspace, { getLeaf });
+        const actions = new GitActions(plugin);
+        const review = vi
+            .spyOn(actions, "reviewConflict")
+            .mockImplementation(() => {});
+        fetchMock.mockResolvedValue(response(details));
+        return {
+            ...context,
+            actions,
+            review,
+            openFile,
+            getLeaf,
+            file,
+            getAbstractFileByPath,
+        };
+    }
+
+    it("opens a clicked text conflict in live preview with resolution controls enabled", async () => {
+        const { actions, manager, file, openFile, getLeaf, review, plugin } =
+            conflictOpening();
+        expect(manager.canResolveTextConflicts).toBe(false);
+        await actions.openConflict("note.md");
+        expect(getLeaf).toHaveBeenCalledWith(false);
+        expect(openFile).toHaveBeenCalledWith(file, {
+            active: true,
+            state: { mode: "source", source: false },
+        });
+        expect(manager.canResolveTextConflicts).toBe(true);
+        expect(plugin.app.workspace.trigger).toHaveBeenCalledWith(
+            "obsidian-git:refresh"
+        );
+        expect(review).not.toHaveBeenCalled();
+        expect(
+            fetchMock.mock.calls.every(([, init]) => init?.method === "GET")
+        ).toBe(true);
+    });
+
+    it("shows stage review and a refresh notice when a server conflict is absent from the browser cache", async () => {
+        const { actions, getAbstractFileByPath, review, openFile, plugin } =
+            conflictOpening();
+        getAbstractFileByPath.mockReturnValue(null);
+        await actions.openConflict("note.md");
+        expect(review).toHaveBeenCalledWith("note.md");
+        expect(openFile).not.toHaveBeenCalled();
+        expect(plugin.displayMessage).toHaveBeenCalledWith(
+            expect.stringContaining("Refresh vault from disk")
+        );
+    });
+
+    it.each(["missing", "binary", "oversized"])(
+        "opens read-only stage review for a %s working file",
+        async (kind) => {
+            const { actions, review, openFile } = conflictOpening();
+            fetchMock.mockResolvedValue(
+                response({
+                    ...details,
+                    contents: { ...details.contents, worktree: { kind } },
+                })
+            );
+            await actions.openConflict("note.md");
+            expect(review).toHaveBeenCalledWith("note.md");
+            expect(openFile).not.toHaveBeenCalled();
+        }
+    );
+
+    it("reports opening failures instead of silently ignoring the click", async () => {
+        const { actions, openFile, plugin } = conflictOpening();
+        const failure = new Error("Editor unavailable");
+        openFile.mockRejectedValue(failure);
+        await actions.openConflict("note.md");
+        expect(plugin.displayError).toHaveBeenCalledWith(failure);
+    });
+
     it("reports a real zero-file merge commit as committed and never stages unrelated work", async () => {
         const { manager, plugin } = setup();
         const ready = {

@@ -69,7 +69,11 @@ invalid/inconsistent success payloads with `INVALID_RESPONSE`.
    means the file did not exist on that side. Ours/theirs do not mean current
    editor text/newest text. Rebase may give stages different meanings; its
    resolution controls are unavailable here.
-5. Open a text conflict in the normal editor. Use the existing per-block Keep
+5. Click the conflicted filename to open the normal editor in live preview.
+   This enables the existing conflict controls even when reading view was the
+   previous default. If the server file is absent from the browser cache, show
+   stage review and an explicit Refresh vault from disk notice. Deleted, binary
+   and oversized working files open stage review directly. Use the existing per-block Keep
    ours/theirs/both/base buttons or edit manually. Save, switch to reading view,
    wait for writes and choose **Mark resolved**. Browser and server content
    hashes must agree; the server rechecks the file and index when staging.

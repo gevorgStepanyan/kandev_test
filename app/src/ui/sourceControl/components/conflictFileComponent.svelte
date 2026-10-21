@@ -30,6 +30,10 @@
 
     function open(event: MouseEvent) {
         event.stopPropagation();
+        if (manager.mergeWorkflow) {
+            void view.plugin.gitActions.openConflict(path, event);
+            return;
+        }
         const file = view.app.vault.getAbstractFileByPath(vaultPath);
         if (file instanceof TFile) {
             getNewLeaf(view.app, event)
