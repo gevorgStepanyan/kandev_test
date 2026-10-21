@@ -25,10 +25,12 @@ Desktop/mobile continue using their existing backends. Ignis ignores shared
 automatic commit/push settings; browser Pull timers are not an unattended server
 scheduler and pause during unfinished Git operations.
 
-Pull still fetches the actual upstream and fast-forwards only. Divergence now
-offers **Merge incoming changes**, requiring explicit confirmation of the reviewed
-OIDs and a clean worktree. A normal merge remains pending, with real Git index
-stages preserved. Resolve text conflicts in the normal editor, save, switch to
+Manual **Pull** fetches the actual upstream, fast-forwards when possible, and
+starts a normal pending merge when histories diverge. It requires a clean
+worktree and leaves real index stages and conflict markers available for review.
+Startup/scheduled Pull remains fast-forward-only and never starts a diverged
+merge. The separately confirmed **Merge incoming changes** action also remains
+available. A normal merge stays pending until Commit. Resolve text conflicts in the normal editor, save, switch to
 reading view and **Mark resolved**; finish using the existing **Commit** flow.
 During merges, every Commit mode uses only the intended staged set. Confirmed
 Abort merge is conservative and blocks if tracked files or the index changed

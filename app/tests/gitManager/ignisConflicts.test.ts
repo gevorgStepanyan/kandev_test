@@ -152,6 +152,76 @@ describe("Ignis diff transport", () => {
     });
 });
 describe("explicit merge workflow", () => {
+    it.each([false, true])(
+        "manual Pull merges divergence and reports pending state (conflicts=%s)",
+        async (hasConflicts) => {
+            const { plugin } = setup();
+            Object.assign(plugin, {
+                isAllInitialized: vi.fn().mockResolvedValue(true),
+            });
+            const actions = new GitActions(plugin);
+            vi.spyOn(actions, "isPullRemoteSet").mockResolvedValue(true);
+            fetchMock.mockResolvedValueOnce(
+                response({
+                    status: "merge-pending",
+                    merge: hasConflicts
+                        ? merging
+                        : {
+                              ...merging,
+                              kind: "merge-awaiting-commit",
+                              unresolvedPaths: [],
+                              canCommitMerge: true,
+                          },
+                })
+            );
+            await actions.pullChangesFromRemote();
+            expect(
+                JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)
+            ).toMatchObject({ mergeOnDivergence: true });
+            expect(choose).not.toHaveBeenCalled();
+            expect(plugin.displayError).not.toHaveBeenCalled();
+            expect(plugin.displayMessage).toHaveBeenCalledWith(
+                expect.stringContaining(
+                    hasConflicts ? "merge has conflicts" : "Commit to finish"
+                )
+            );
+            expect(plugin.displayMessage).not.toHaveBeenCalledWith(
+                expect.stringContaining("Everything is up-to-date")
+            );
+            expect(plugin.app.workspace.trigger).toHaveBeenCalledWith(
+                "obsidian-git:refresh"
+            );
+        }
+    );
+
+    it("automatic Pull never authorizes a diverged merge", async () => {
+        const { plugin } = setup();
+        Object.assign(plugin, {
+            isAllInitialized: vi.fn().mockResolvedValue(true),
+        });
+        const actions = new GitActions(plugin);
+        vi.spyOn(actions, "isPullRemoteSet").mockResolvedValue(true);
+        fetchMock.mockResolvedValueOnce(
+            response(
+                {
+                    error: {
+                        code: "DIVERGED",
+                        message: "Automatic Pull requires manual integration",
+                    },
+                },
+                409
+            )
+        );
+        await actions.pullChangesFromRemote({ fromAuto: true });
+        expect(
+            JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)
+        ).not.toHaveProperty("mergeOnDivergence");
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(choose).not.toHaveBeenCalled();
+        expect(plugin.displayError).toHaveBeenCalledWith(
+            expect.objectContaining({ code: "DIVERGED" })
+        );
+    });
     function conflictOpening() {
         const context = setup();
         const { plugin } = context;

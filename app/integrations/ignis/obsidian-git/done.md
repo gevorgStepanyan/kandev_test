@@ -88,3 +88,23 @@
   capabilities, reconciling externally replaced plugin artifacts, and reloading
   the running plugin. A live-instance diagnostic is needed to distinguish stale
   code from a deployment-specific failure.
+
+## Manual Pull now integrates diverged history
+
+- Manual sidebar/command Pull sends `mergeOnDivergence: true` to the existing
+  `/pull` endpoint. After fetch, divergence starts a normal pending merge under
+  the same repository lock and existing clean-tree/write/ownership safeguards.
+- Conflict stages/content survive; Source Control shows actual conflicts for
+  editor resolution and Mark resolved. Clean divergence awaits manual Commit.
+  Neither path auto-commits or silently chooses a side.
+- Boot/scheduled Pull passes `fromAuto: true` and remains fast-forward-only.
+  The default API/direct-manager Pull behavior remains compatible.
+- A typed `merge-pending` result prevents false up-to-date/success notices and
+  refreshes status/editor controls and Ignis caches, including partial failures.
+- This replaces the earlier requirement for a second Merge click after manual
+  Pull, per the updated user workflow. The separate confirmed Merge action is
+  still available. Deploy browser and server changes together.
+- Validation for this update: `pnpm run all` passed all checks, including 251
+  Vitest tests and 95 server tests. The production bundle smoke test also
+  exercised manual Pull's pending-merge result successfully. Live deployment
+  verification remains in `TESTING_conflicts.md`.

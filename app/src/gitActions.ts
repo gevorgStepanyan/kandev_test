@@ -362,8 +362,10 @@ export class GitActions {
     }
 
     ///Used for command
-    async pullChangesFromRemote(): Promise<void> {
-        const actionResult = await this.pull();
+    async pullChangesFromRemote(
+        options: { fromAuto?: boolean } = {}
+    ): Promise<void> {
+        const actionResult = await this.pull(options);
         if (actionResult.status !== "success") {
             return;
         }
@@ -377,6 +379,13 @@ export class GitActions {
 
     private reportPullResult(result: PullResult): void {
         switch (result.status) {
+            case "merge-pending":
+                this.plugin.displayMessage(
+                    result.conflicts.length
+                        ? `Pull: merge has conflicts in ${result.conflicts.length} file(s). Resolve them in Source Control, mark resolved, then Commit.`
+                        : "Pull: incoming changes merged. Review staged changes and Commit to finish the merge."
+                );
+                return;
             case "updated": {
                 const totalFiles = result.files.length + result.outsideVault;
                 const outsideMessage =
@@ -880,19 +889,25 @@ export class GitActions {
         }
     }
 
-    async pull(): Promise<GitActionResult<PullResult>> {
+    async pull(
+        options: { fromAuto?: boolean } = {}
+    ): Promise<GitActionResult<PullResult>> {
         return this.runReadyGitAction<PullResult>(
-            () => this.performPull(),
+            () => this.performPull(options.fromAuto ?? false),
             true
         );
     }
 
-    private async performPull(): Promise<PullResult> {
+    private async performPull(fromAuto = false): Promise<PullResult> {
         if (!(await this.isPullRemoteSet())) {
             return { status: "skipped", reason: "no-upstream" };
         }
         this.plugin.log("Pulling....");
-        const result = await this.plugin.gitManager.pull();
+        const manager = this.plugin.gitManager;
+        const result =
+            manager instanceof IgnisGitManager
+                ? await manager.pull({ mergeOnDivergence: !fromAuto })
+                : await manager.pull();
         this.plugin.setPluginState({ offlineMode: false });
         return result;
     }

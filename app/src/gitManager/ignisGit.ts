@@ -208,12 +208,18 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
             );
     }
 
-    async pull(): Promise<PullResult> {
+    async pull(
+        options: { mergeOnDivergence?: boolean } = {}
+    ): Promise<PullResult> {
         return this.withGitOperation(GitOperation.pull, async () => {
             this.ensureBrowserSafe();
             this.pendingState = undefined;
             try {
-                const value = await this.request("pull", true);
+                const value = await this.request(
+                    "pull",
+                    true,
+                    options.mergeOnDivergence ? { mergeOnDivergence: true } : {}
+                );
                 if (!record(value))
                     throw new IgnisGitError(
                         "INVALID_RESPONSE",
@@ -221,6 +227,22 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
                     );
                 if (typeof value.refreshWarning === "string")
                     this.plugin.displayMessage(value.refreshWarning);
+                if (value.status === "merge-pending") {
+                    const pending = mergeState(value.merge);
+                    if (pending.operation !== "merge")
+                        throw new IgnisGitError(
+                            "INVALID_RESPONSE",
+                            "Pull did not confirm a pending merge. Refresh repository state before retrying."
+                        );
+                    this.canResolveTextConflicts = true;
+                    this.app.workspace.trigger("obsidian-git:head-change");
+                    return {
+                        status: "merge-pending",
+                        conflicts: pending.unresolvedPaths.map(
+                            (file) => file.path
+                        ),
+                    };
+                }
                 if (value.status === "up-to-date")
                     return { status: "up-to-date" };
                 if (

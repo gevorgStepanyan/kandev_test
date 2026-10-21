@@ -127,6 +127,118 @@ test("preserves local commits and blocks divergence without merge state", async 
     assert.equal(git(repo, "rev-parse", "HEAD"), head);
     assert.equal((await service.state("Main")).mergeInProgress, false);
 });
+
+for (const conflicts of [false, true]) {
+    test(`manual Pull fetches and starts a pending merge (conflicts=${conflicts})`, async (t) => {
+        const { service, repo, advance } = await fixture(t);
+        const localPath = conflicts ? "note.md" : "local.md";
+        await fs.writeFile(path.join(repo, localPath), "ours\n");
+        git(repo, "add", ".");
+        git(repo, "commit", "-m", "local commit");
+        const head = git(repo, "rev-parse", "HEAD");
+        await advance("note.md", "theirs\n");
+        const result = await service.pull("Main", { mergeOnDivergence: true });
+        assert.equal(result.status, "merge-pending");
+        assert.equal(
+            result.merge.kind,
+            conflicts ? "merge-conflicted" : "merge-awaiting-commit"
+        );
+        assert.equal(git(repo, "rev-parse", "HEAD"), head);
+        assert.equal(
+            git(repo, "rev-parse", "MERGE_HEAD"),
+            git(repo, "rev-parse", "@{upstream}")
+        );
+        if (conflicts) {
+            assert.deepEqual(
+                result.merge.unresolvedPaths.map((file) => file.path),
+                ["note.md"]
+            );
+            assert.match(git(repo, "ls-files", "-u"), / 1\tnote.md/);
+            assert.match(
+                await fs.readFile(path.join(repo, "note.md"), "utf8"),
+                /<<<<<<< HEAD/
+            );
+        }
+        await assert.rejects(
+            service.pull("Main", { mergeOnDivergence: true }),
+            { code: "UNFINISHED_OPERATION" }
+        );
+    });
+}
+
+test("manual Pull keeps dirty work intact and validates merge authorization type", async (t) => {
+    const { service, repo, advance } = await fixture(t);
+    await advance();
+    await fs.writeFile(path.join(repo, "note.md"), "uncommitted note\n");
+    await assert.rejects(service.pull("Main", { mergeOnDivergence: true }), {
+        code: "PULL_BLOCKED_DIRTY",
+    });
+    await assert.rejects(service.pull("Main", { mergeOnDivergence: "yes" }), {
+        code: "INVALID_REQUEST",
+    });
+    assert.equal((await service.state("Main")).merge.operation, "none");
+    assert.equal(
+        await fs.readFile(path.join(repo, "note.md"), "utf8"),
+        "uncommitted note\n"
+    );
+});
+
+test("Pull route forwards manual merge intent and reconciles pending merges and partial failures", async () => {
+    const handlers = {};
+    let attempts = 0,
+        reconciled = 0;
+    mountRoutes(
+        {
+            use() {},
+            get() {},
+            post(route, handle) {
+                handlers[route] = handle;
+            },
+        },
+        {
+            async pull(id, input) {
+                assert.equal(id, "Main");
+                assert.equal(input.mergeOnDivergence, true);
+                if (++attempts === 1)
+                    return {
+                        status: "merge-pending",
+                        merge: { operation: "merge" },
+                    };
+                const { GitServiceError } = require("../obsidian-git/errors");
+                throw Object.assign(
+                    new GitServiceError("TIMEOUT", "Inspect merge state", 504),
+                    { reconcileVault: true }
+                );
+            },
+        },
+        {
+            enabled: true,
+            origin: "https://ignis.test",
+            reconcile: async () => {
+                reconciled++;
+            },
+        }
+    );
+    const res = {
+        status(code) {
+            this.code = code;
+            return this;
+        },
+        json(value) {
+            this.value = value;
+        },
+    };
+    const request = {
+        method: "POST",
+        body: { vaultId: "Main", mergeOnDivergence: true },
+    };
+    await handlers["/pull"](request, res);
+    assert.equal(res.value.status, "merge-pending");
+    await handlers["/pull"](request, res);
+    assert.equal(res.code, 504);
+    assert.equal(res.value.error.code, "TIMEOUT");
+    assert.equal(reconciled, 2);
+});
 test("detects unfinished operations and preserves an existing user report", async (t) => {
     const { service, repo } = await fixture(t);
     await fs.writeFile(path.join(repo, "git_conflict.md"), "user file\n");

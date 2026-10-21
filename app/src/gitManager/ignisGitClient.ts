@@ -21,6 +21,7 @@ export type IgnisCommitRequest = {
 };
 
 export type IgnisMutationPayload =
+    | { mergeOnDivergence: boolean }
     | { path?: string; dir?: string }
     | IgnisCommitRequest
     | {

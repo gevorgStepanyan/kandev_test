@@ -676,7 +676,9 @@ export default class ObsidianGit extends Plugin {
                                 (await this.gitManager.isMergeInProgress())
                             )
                                 return;
-                            await this.gitActions.pullChangesFromRemote();
+                            await this.gitActions.pullChangesFromRemote({
+                                fromAuto: true,
+                            });
                         });
                     }
 

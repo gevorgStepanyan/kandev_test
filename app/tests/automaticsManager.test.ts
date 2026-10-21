@@ -103,6 +103,7 @@ describe("Ignis automatic routines", () => {
             expect(vi.getTimerCount()).toBe(1);
             await vi.advanceTimersByTimeAsync(60 * 60000);
             expect(pull).toHaveBeenCalledOnce();
+            expect(pull).toHaveBeenCalledWith({ fromAuto: true });
             vi.mocked(plugin.gitManager.isMergeInProgress).mockResolvedValue(
                 true
             );

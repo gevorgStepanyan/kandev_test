@@ -35,7 +35,15 @@ const unavailable = new Proxy(
     }
 );
 const win = {
-    __ignis: { version: "pilot" },
+    __ignis: {
+        version: "pilot",
+        writes: {
+            getState: () => "clean",
+            listFailed: () => [],
+            listPending: () => [],
+            getDetail: () => ({ pending: 0, retrying: 0 }),
+        },
+    },
     __currentVaultId: "Main",
     setTimeout,
     clearTimeout,
@@ -106,7 +114,48 @@ const context = {
     AbortController,
     Response,
     localStorage: { debug: "-simple-git" },
-    fetch: async (url) => {
+    fetch: async (url, init) => {
+        if (url.includes("/state?"))
+            return new Response(
+                JSON.stringify({
+                    status: {
+                        all: [],
+                        staged: [],
+                        changed: [],
+                        conflicted: [],
+                        stagedOutsideVault: 0,
+                        conflictedOutsideVault: 0,
+                    },
+                    branch: {
+                        current: "main",
+                        tracking: "origin/main",
+                        branches: ["main"],
+                    },
+                    mergeInProgress: false,
+                    lastCommitTime: null,
+                    unpushedCommits: 1,
+                    config: {},
+                    remotes: {},
+                })
+            );
+        if (url.endsWith("/pull")) {
+            if (JSON.parse(init.body).mergeOnDivergence !== true)
+                throw new Error("Manual Pull did not authorize integration");
+            return new Response(
+                JSON.stringify({
+                    status: "merge-pending",
+                    merge: {
+                        operation: "merge",
+                        kind: "merge-awaiting-commit",
+                        head: "a".repeat(40),
+                        mergeHead: "b".repeat(40),
+                        unresolvedPaths: [],
+                        canCommitMerge: true,
+                        canAbortMerge: true,
+                    },
+                })
+            );
+        }
         if (url.includes("/diff?")) {
             if (!url.includes("kind=staged"))
                 throw new Error("Staged diff wiring regression");
@@ -204,6 +253,17 @@ plugin
             );
         console.log(
             "Production bundle opened the Ignis staged diff and conflict editor."
+        );
+        const pulled = await plugin.gitActions.pull();
+        if (
+            pulled.status !== "success" ||
+            pulled.value.status !== "merge-pending"
+        )
+            throw new Error(
+                "Production bundle manual Pull did not preserve the pending merge result"
+            );
+        console.log(
+            "Production bundle manual Pull integrated divergence without committing."
         );
     })
     .catch((e) => {

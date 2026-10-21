@@ -8,7 +8,7 @@ server integration. Desktop and mobile retain their existing backends.
 
 | Existing interface                                                     | Current behavior / change                                                                                                                                                                                                   |
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GitService.pull`, `POST /pull`                                        | Still fetches the current branch's actual upstream and fast-forwards only. Divergence returns `DIVERGED`; it never starts a merge.                                                                                          |
+| `GitService.pull`, `POST /pull`                                        | Fetches the actual upstream; manual Pull opts into a normal pending merge on divergence. Automatic/default API Pull remains fast-forward-only and returns `DIVERGED`.                                                       |
 | `GitService.state`, `GET /state`                                       | Includes porcelain status and authoritative merge state, including orphaned unmerged stages and unsupported operations.                                                                                                     |
 | `mutateIndex`, `POST /stage`, `/stage-all`, `/unstage`, `/unstage-all` | Ordinary staging remains available. Bulk staging refuses scopes containing unresolved paths. A single-file Stage falls through to confirmed Mark resolved. Unstaging is blocked during an active operation.                 |
 | `commit.js`, `POST /commit`                                            | Previously rejected every unfinished operation. Now allows a resolved normal merge, forces staged-only behavior for all/Smart modes, rejects Amend and unresolved stages, and verifies both parents and the committed tree. |
@@ -44,7 +44,7 @@ browser states. `canAbortMerge` indicates snapshot availability; edits may still
 make abort unsafe when the server checks the snapshot.
 
 Errors retain the existing `{error: {code, message, reportFile?}}` envelope.
-Divergence uses the existing `DIVERGED` code. Dirty Pull uses
+Automatic/default API divergence uses the existing `DIVERGED` code. Dirty Pull uses
 `PULL_BLOCKED_DIRTY`; dirty merge uses `WORKTREE_DIRTY`. Other relevant codes are
 `MERGE_IN_PROGRESS`, `UNFINISHED_OPERATION`, `UNMERGED_PATH`, `UNMERGED_INDEX`,
 `CONFLICT_NOT_RESOLVED`, `STALE_MERGE_STATE`, `MERGE_ABORT_UNSAFE`,
@@ -57,9 +57,12 @@ invalid/inconsistent success payloads with `INVALID_RESPONSE`.
 
 1. Save notes, switch editable Markdown panes to reading view or close them,
    and wait for successful Ignis writes in **all tabs** before Pull/Merge.
-2. Pull fetches normally. When histories diverge, select **Merge incoming
-   changes** in Source Control or the command palette and confirm the reviewed
-   upstream/HEAD. The server verifies those OIDs under its repository lock.
+2. Click **Pull** to fetch and integrate the actual upstream. A fast-forward
+   proceeds normally; divergence starts a normal pending merge in the same server
+   repository lock. This manual action authorizes the merge without a second
+   confirmation. Automatic/startup Pull remains fast-forward-only; after its
+   divergence notice, use manual Pull or the separately confirmed **Merge incoming
+   changes** action. No automatic commit, stash, reset or winner selection occurs.
 3. The worktree, index and untracked set must be clean. Merge uses
    `--no-commit --no-ff --no-overwrite-ignore`, disables autostash/rerere,
    and never chooses a winner. Clean merges also await a deliberate Commit.
@@ -184,3 +187,18 @@ Documentation changes extend this README, `done.md`, `docs/ignis-integration.md`
 and `structure.md`, with this contract and root `TESTING_conflicts.md` added.
 Manual acceptance remains necessary for real CodeMirror save behavior, Ignis
 cache/WebSocket propagation, simultaneous tabs and deployment/container restart.
+
+## Manual Pull integration
+
+`POST /pull` now accepts optional boolean `mergeOnDivergence`. The manual sidebar
+and command-palette Pull actions send `true`; startup and scheduled Pull omit it.
+Omitting it preserves the existing API behavior. Non-boolean values are rejected.
+On divergence with the flag, the server calls the existing validated merge
+implementation using the freshly fetched HEAD/upstream OIDs while retaining the
+Pull lock. It returns `{status: "merge-pending", merge: <actual merge state>}`.
+The shared frontend `PullResult` maps that to
+`{status: "merge-pending", conflicts: string[]}`. Conflict and clean-awaiting-commit
+notices remain distinct from fast-forward success and up-to-date notices.
+The index and file markers are preserved for the existing resolution controls.
+Pending merge results and post-mutation errors reconcile the Ignis vault cache.
+Deploy both the browser bundle and server integration for this addition.

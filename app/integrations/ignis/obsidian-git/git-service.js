@@ -871,7 +871,16 @@ class GitService {
         return file;
     }
 
-    async pull(vaultId) {
+    async pull(vaultId, input = {}) {
+        if (
+            input.mergeOnDivergence !== undefined &&
+            typeof input.mergeOnDivergence !== "boolean"
+        )
+            throw new GitServiceError(
+                "INVALID_REQUEST",
+                "mergeOnDivergence must be a boolean.",
+                400
+            );
         return this.locked(vaultId, async (repo) => {
             const branch = await this.branch(repo);
             let status = await this.status(repo),
@@ -958,11 +967,34 @@ class GitService {
                         [0, 1]
                     )
                 ).code !== 0
-            )
+            ) {
+                if (input.mergeOnDivergence === true) {
+                    // Manual Pull authorizes integration with the upstream just
+                    // fetched under this lock. Reuse all normal merge checks.
+                    try {
+                        const merge = await require("./merge").start(
+                            this,
+                            repo,
+                            {
+                                vaultId,
+                                expectedHead: local,
+                                expectedUpstream: remote,
+                                confirmed: true,
+                            }
+                        );
+                        return { status: "merge-pending", merge };
+                    } catch (error) {
+                        // Git may already have changed files before a timeout or
+                        // post-merge validation failure. Reconcile this authorized vault.
+                        error.reconcileVault = true;
+                        throw error;
+                    }
+                }
                 await block(
                     "DIVERGED",
                     "Local and remote history have diverged. Open Source Control and choose Merge incoming changes to review and explicitly start a merge. No merge or rebase was attempted."
                 );
+            }
             const tree = (await this.run(repo, ["ls-tree", "-r", remote])).out;
             if (/^(120000|160000) /m.test(tree))
                 throw new GitServiceError(

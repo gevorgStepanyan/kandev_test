@@ -273,6 +273,7 @@ export type NotReadyResult = {
 };
 
 export type PullResult =
+    | { status: "merge-pending"; conflicts: string[] }
     | { status: "updated"; files: FileStatusResult[]; outsideVault: number }
     | { status: "up-to-date" }
     | { status: "skipped"; reason: "no-upstream" }

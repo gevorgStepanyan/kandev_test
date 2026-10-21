@@ -79,10 +79,12 @@ Disable other Git jobs for this disposable vault while verifying this workflow.
 
 ## Manual browser checklist
 
-- [ ] Open two tabs on the test vault. Pull reports divergence and creates an
-      excluded diagnostic report. No merge begins until **Merge incoming changes**
-      is confirmed. Cancel leaves HEAD/index/worktree unchanged.
-- [ ] Confirm Merge in one tab; attempt an action using stale reviewed state in
+- [ ] Open two tabs on the test vault. Manual **Pull** fetches and starts the
+      merge directly, exposes `note.md` in Conflicts, and creates/appends an
+      excluded diagnostic report. It must not display the old divergence blocker
+      or falsely report up-to-date. In a separate fixture, automatic/startup Pull
+      stops at divergence without starting a merge.
+- [ ] Start the merge in one tab; attempt an action using stale reviewed state in
       the second. It must reject stale requests and refresh, rather than repeat or
       overwrite the first tab's operation. A repository busy response is retryable
       after reviewing state.

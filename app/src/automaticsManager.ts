@@ -235,7 +235,9 @@ export default class AutomaticsManager {
                     (await this.plugin.gitManager.isMergeInProgress())
                 )
                     return;
-                await this.plugin.gitActions.pullChangesFromRemote();
+                await this.plugin.gitActions.pullChangesFromRemote({
+                    fromAuto: true,
+                });
             },
             () => {
                 this.saveLastAuto(new Date(), "pull");

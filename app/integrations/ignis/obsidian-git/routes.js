@@ -164,32 +164,38 @@ function mountRoutes(router, service, options) {
     );
     router.post(
         "/pull",
-        handle(async (id) => {
-            try {
-                const result = await service.pull(id);
-                if (result.status === "updated") {
-                    try {
-                        await options.reconcile(id);
-                    } catch {
-                        return {
-                            ...result,
-                            refreshWarning:
-                                "Pull succeeded, but vault reconciliation failed. Use Ignis: Refresh vault from disk.",
-                        };
+        handle(
+            async (id, input) => {
+                try {
+                    const result = await service.pull(id, input);
+                    if (
+                        result.status === "updated" ||
+                        result.status === "merge-pending"
+                    ) {
+                        try {
+                            await options.reconcile(id);
+                        } catch {
+                            return {
+                                ...result,
+                                refreshWarning:
+                                    "Pull changed repository state, but vault reconciliation failed. Use Ignis: Refresh vault from disk.",
+                            };
+                        }
                     }
-                }
-                return result;
-            } catch (error) {
-                if (error.reportFile) {
-                    try {
-                        await options.reconcile(id);
-                    } catch {
-                        /* preserve the original block error */
+                    return result;
+                } catch (error) {
+                    if (error.reportFile || error.reconcileVault) {
+                        try {
+                            await options.reconcile(id);
+                        } catch {
+                            /* preserve the original block error */
+                        }
                     }
+                    throw error;
                 }
-                throw error;
-            }
-        })
+            },
+            ["mergeOnDivergence"]
+        )
     );
 }
 module.exports = { mountRoutes };
