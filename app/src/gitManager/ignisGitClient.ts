@@ -205,7 +205,6 @@ export function mergeState(value: unknown): MergeState {
                 !validOid(value.upstream.oid) ||
                 typeof value.upstream.ref !== "string")) ||
         typeof value.canCommitMerge !== "boolean" ||
-        typeof value.canAbortMerge !== "boolean" ||
         !Array.isArray(value.unresolvedPaths) ||
         !value.unresolvedPaths.every(
             (v: unknown) =>
@@ -229,7 +228,6 @@ export function mergeState(value: unknown): MergeState {
         (merging && (!value.head || !value.mergeHead)) ||
         (!merging && value.mergeHead !== undefined) ||
         value.canCommitMerge !== (merging && !unresolved) ||
-        (value.canAbortMerge && !merging) ||
         (merging
             ? value.kind !==
               (unresolved ? "merge-conflicted" : "merge-awaiting-commit")

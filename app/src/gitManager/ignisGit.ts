@@ -180,7 +180,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
         if (!writes)
             throw new IgnisGitError(
                 "BROWSER_STATE",
-                "The Ignis write-safety API is unavailable. Update Ignis before Pull, Merge or Abort merge."
+                "The Ignis write-safety API is unavailable. Update Ignis before Pull or Merge."
             );
         if (
             writes.getState() !== "clean" ||
@@ -191,7 +191,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
         )
             throw new IgnisGitError(
                 "BROWSER_DIRTY",
-                "Wait for Ignis writes to finish and resolve failed writes before Pull, Merge or Abort merge."
+                "Wait for Ignis writes to finish and resolve failed writes before Pull or Merge."
             );
         let editable = false;
         this.app.workspace.iterateAllLeaves((leaf) => {
@@ -204,7 +204,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
         if (editable)
             throw new IgnisGitError(
                 "BROWSER_DIRTY",
-                "Close editable Markdown panes or switch them to reading view before Pull, Merge or Abort merge. Unsaved edits must reach disk first."
+                "Close editable Markdown panes or switch them to reading view before Pull or Merge. Unsaved edits must reach disk first."
             );
     }
 
@@ -693,11 +693,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
             try {
                 const value = await this.request(endpoint, true, payload);
                 const state = mergeState(value);
-                if (
-                    endpoint === "merge/abort"
-                        ? state.operation !== "none"
-                        : state.operation !== "merge"
-                )
+                if (state.operation !== "merge")
                     throw new IgnisGitError(
                         "INVALID_RESPONSE",
                         "The server did not confirm the expected merge state. Refresh before retrying."
@@ -707,9 +703,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
                 this.plugin.displayMessage(
                     state.kind === "merge-conflicted"
                         ? "Merge in progress. Resolve each conflict, save and mark resolved, then Commit."
-                        : state.kind === "merge-awaiting-commit"
-                          ? "All paths resolved. Review staged changes and finish the merge with Commit."
-                          : "Merge aborted. Repository state verified."
+                        : "All paths resolved. Review staged changes and finish the merge with Commit."
                 );
             } finally {
                 this.pendingState = undefined;
@@ -730,21 +724,6 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
         await this.mergeMutation("merge", {
             expectedHead: state.head,
             expectedUpstream: state.upstream?.oid,
-            confirmed: true,
-        });
-    }
-    async abortMerge(state: MergeState): Promise<void> {
-        if (
-            !(await this.confirm(
-                "Abort merge",
-                "Abort this merge? Resolution edits may be lost. Abort is blocked if files or the index changed since merge began."
-            ))
-        )
-            return;
-        this.ensureBrowserSafe();
-        await this.mergeMutation("merge/abort", {
-            expectedHead: state.head,
-            expectedMergeHead: state.mergeHead,
             confirmed: true,
         });
     }

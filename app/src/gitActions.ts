@@ -946,20 +946,6 @@ export class GitActions {
         }
     }
 
-    async mergeIncomingChanges(): Promise<void> {
-        await this.runReadyGitAction(async () => {
-            const workflow = this.plugin.gitManager.mergeWorkflow;
-            if (!workflow) throw new IgnisUnsupportedGitFeatureError();
-            await workflow.startMerge(await workflow.getMergeState());
-        }, true);
-    }
-    async abortMerge(): Promise<void> {
-        await this.runReadyGitAction(async () => {
-            const workflow = this.plugin.gitManager.mergeWorkflow;
-            if (!workflow) throw new IgnisUnsupportedGitFeatureError();
-            await workflow.abortMerge(await workflow.getMergeState());
-        }, true);
-    }
     reviewConflict(path: string): void {
         new IgnisConflictModal(this.plugin, path).open();
     }

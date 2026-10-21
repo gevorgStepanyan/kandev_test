@@ -811,7 +811,7 @@ class GitService {
             "```",
             "",
             "## Recommended resolution",
-            "Review Git status in Source Control. For divergence, choose Merge incoming changes. During a merge, resolve and stage each file, then Commit. Abort only after preserving resolution edits.",
+            "Review Git status in Source Control. For divergence, use manual Pull. During a merge, resolve and stage each file, then Commit.",
             ...(state.merge
                 ? [
                       `Operation: ${state.merge.operation}`,
@@ -994,7 +994,7 @@ class GitService {
                 }
                 await block(
                     "DIVERGED",
-                    "Local and remote history have diverged. Open Source Control and choose Merge incoming changes to review and explicitly start a merge. No merge or rebase was attempted."
+                    "Local and remote history have diverged. Use manual Pull to integrate the incoming changes. No merge or rebase was attempted."
                 );
             }
             const tree = (await this.run(repo, ["ls-tree", "-r", remote])).out;
@@ -1101,9 +1101,17 @@ class GitService {
         });
     }
     async mergeAction(vaultId, action, input) {
-        return this.locked(vaultId, (repo) =>
-            require("./merge")[action](this, repo, { ...input, vaultId })
-        );
+        return this.locked(vaultId, (repo) => {
+            if (!["start", "resolve"].includes(action))
+                throw new GitServiceError(
+                    "UNSUPPORTED_OPERATION",
+                    "This merge action is not supported."
+                );
+            return require("./merge")[action](this, repo, {
+                ...input,
+                vaultId,
+            });
+        });
     }
 
     kill(child) {

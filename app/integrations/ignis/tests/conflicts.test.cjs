@@ -86,15 +86,6 @@ async function fixture(t, kind = "content") {
             ...extra,
         });
     };
-    const abort = async (extra = {}) => {
-        const current = await service.mergeState("Main");
-        return service.mergeAction("Main", "abort", {
-            expectedHead: current.head,
-            expectedMergeHead: current.mergeHead,
-            confirmed: true,
-            ...extra,
-        });
-    };
     const commit = (mode = "staged") =>
         service.commit("Main", {
             mode,
@@ -102,7 +93,7 @@ async function fixture(t, kind = "content") {
             amend: false,
             ...(mode === "smart" ? { autoStageOnEmptyIndex: true } : {}),
         });
-    return { repo, service, ctx, write, start, resolve, abort, commit };
+    return { repo, service, ctx, write, start, resolve, commit };
 }
 test("clean diverged merge waits for Commit, preserves unrelated work and creates two parents", async (t) => {
     const f = await fixture(t, "clean");
@@ -231,43 +222,6 @@ test("add/add correctly reports missing base; binary stages are not decoded as t
         code: "UNSUPPORTED_OPERATION",
     });
 });
-test("safe abort survives restart and preserves an unrelated untracked note and local commits", async (t) => {
-    const f = await fixture(t);
-    const before = git(f.repo, "rev-parse", "HEAD");
-    await f.start();
-    await f.write("new-note.md", "keep\n");
-    const restarted = new GitService(f.ctx);
-    t.after(() => restarted.shutdown());
-    const state = await restarted.mergeState("Main");
-    await restarted.mergeAction("Main", "abort", {
-        confirmed: true,
-        expectedHead: state.head,
-        expectedMergeHead: state.mergeHead,
-    });
-    assert.equal(git(f.repo, "rev-parse", "HEAD"), before);
-    assert.equal(git(f.repo, "ls-files", "-u"), "");
-    assert.equal(
-        await fs.readFile(path.join(f.repo, "note.md"), "utf8"),
-        "ours\n"
-    );
-    assert.equal(
-        await fs.readFile(path.join(f.repo, "new-note.md"), "utf8"),
-        "keep\n"
-    );
-});
-test("abort refuses resolution edits or changed index and never invokes reset", async (t) => {
-    const f = await fixture(t);
-    await f.start();
-    await f.write("note.md", "valuable resolution\n");
-    await assert.rejects(f.abort(), { code: "MERGE_ABORT_UNSAFE" });
-    await f.resolve("note.md");
-    await assert.rejects(f.abort(), { code: "MERGE_ABORT_UNSAFE" });
-    assert.equal((await f.service.mergeState("Main")).operation, "merge");
-    assert.equal(
-        await fs.readFile(path.join(f.repo, "note.md"), "utf8"),
-        "valuable resolution\n"
-    );
-});
 test("stale merge, stale stage and unconfirmed mutation leave files and index intact", async (t) => {
     const f = await fixture(t);
     await assert.rejects(f.start({ expectedHead: "a".repeat(40) }), {
@@ -285,10 +239,60 @@ test("stale merge, stale stage and unconfirmed mutation leave files and index in
     await assert.rejects(f.resolve("note.md", { expectedHash: "old" }), {
         code: "STALE_MERGE_STATE",
     });
-    await assert.rejects(f.abort({ expectedMergeHead: "a".repeat(40) }), {
-        code: "STALE_MERGE_STATE",
-    });
     assert.equal(git(f.repo, "ls-files", "--stage"), index);
+});
+
+test("removed abort functionality cannot change a pending merge", async (t) => {
+    const f = await fixture(t);
+    await f.start();
+    const before = git(f.repo, "ls-files", "--stage");
+    const contents = await fs.readFile(path.join(f.repo, "note.md"));
+    assert.equal(require("../obsidian-git/merge").abort, undefined);
+    await assert.rejects(f.service.mergeAction("Main", "abort", {}), {
+        code: "UNSUPPORTED_OPERATION",
+    });
+    assert.equal(git(f.repo, "ls-files", "--stage"), before);
+    assert.deepEqual(await fs.readFile(path.join(f.repo, "note.md")), contents);
+    const current = await f.service.mergeState("Main");
+    assert.equal(current.operation, "merge");
+    assert.equal(Object.hasOwn(current, "canAbortMerge"), false);
+    await assert.rejects(
+        fs.stat(path.join(f.repo, ".git", "obsidian-git-merge.json")),
+        { code: "ENOENT" }
+    );
+    const handlers = {};
+    mountRoutes(
+        {
+            use() {},
+            get() {},
+            post(route, handle) {
+                handlers[route] = handle;
+            },
+        },
+        f.service,
+        {
+            enabled: true,
+            origin: "https://test.invalid",
+            reconcile: async () => {},
+        }
+    );
+    assert.equal(handlers["/merge/abort"], undefined);
+});
+
+test("a pending merge from an older integration still finishes with Commit", async (t) => {
+    const f = await fixture(t);
+    const before = await f.start();
+    const legacy = path.join(f.repo, ".git", "obsidian-git-merge.json");
+    await fs.writeFile(legacy, "legacy abort metadata\n");
+    await f.write("note.md", "resolved\n");
+    await f.resolve("note.md");
+    await f.commit();
+    assert.deepEqual(
+        git(f.repo, "show", "-s", "--format=%P", "HEAD").split(" "),
+        [before.head, before.mergeHead]
+    );
+    assert.equal((await f.service.mergeState("Main")).operation, "none");
+    assert.equal(await fs.readFile(legacy, "utf8"), "legacy abort metadata\n");
 });
 test("a write racing stage is detected and the original conflict index restored", async (t) => {
     const f = await fixture(t);
@@ -612,7 +616,6 @@ for (const metadata of ["REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]) {
                 { code: "UNSUPPORTED_OPERATION" }
             );
         await assert.rejects(f.start(), { code: "MERGE_IN_PROGRESS" });
-        await assert.rejects(f.abort(), { code: "UNSUPPORTED_OPERATION" });
         assert.match(
             (
                 await f.service.fileDiff("Main", {
@@ -634,14 +637,13 @@ test("orphaned unmerged stages block automatics even without MERGE_HEAD", async 
     assert.equal(state.merge.operation, "other");
     assert.equal(state.mergeInProgress, true);
     assert.equal(state.merge.canCommitMerge, false);
-    assert.equal(state.merge.canAbortMerge, false);
     assert.deepEqual(state.status.conflicted, ["note.md"]);
 });
 
-test("merge, resolve and abort share the existing repository lock", async (t) => {
+test("merge and resolve share the existing repository lock", async (t) => {
     const f = await fixture(t);
     await f.service.locked("Main", async () => {
-        for (const action of ["start", "resolve", "abort"])
+        for (const action of ["start", "resolve"])
             await assert.rejects(f.service.mergeAction("Main", action, {}), {
                 code: "BUSY",
             });

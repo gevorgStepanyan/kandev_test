@@ -8,11 +8,26 @@ import {
 import { runGitAction } from "src/gitAction";
 import { createFakePlugin } from "../helpers/createFakePlugin";
 import { GitActions } from "src/gitActions";
+import { addCommmands } from "src/commands";
 
 afterEach(() => {
     delete window.__ignis;
 });
 describe("Ignis runtime capabilities", () => {
+    it("does not register Ignis-only merge or abort commands", () => {
+        window.__ignis = { version: "test" };
+        const plugin = createFakePlugin();
+        const register = vi.fn<typeof plugin.addCommand>();
+        plugin.addCommand = register;
+        addCommmands(plugin);
+        const ids = register.mock.calls.map(([command]) => command.id);
+        expect(ids).toContain("pull");
+        expect(ids).not.toContain("abort-merge");
+        expect(ids).not.toContain("merge-incoming-changes");
+        expect(
+            Reflect.get(new GitActions(plugin), "abortMerge")
+        ).toBeUndefined();
+    });
     it("preserves desktop/mobile selection and prioritizes explicit Ignis detection", () => {
         expect(isIgnis()).toBe(false);
         expect(gitBackendForRuntime(true)).toBe("simple");

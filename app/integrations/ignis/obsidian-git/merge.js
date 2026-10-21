@@ -1,4 +1,4 @@
-// Native Git state is authoritative. Snapshot metadata only makes abort stricter.
+// Native Git operation metadata and index stages are authoritative.
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
@@ -148,11 +148,6 @@ async function state(service, repo) {
         mergeHead,
         unresolvedPaths,
         canCommitMerge: operation === "merge" && !entries.length,
-        canAbortMerge:
-            operation === "merge" &&
-            (await exists(
-                await gitPath(service, repo, "obsidian-git-merge.json")
-            )),
     };
 }
 function textContent(bytes, mode) {
@@ -326,35 +321,6 @@ async function diff(service, repo, file, kind) {
         diff: result.out,
     };
 }
-async function snapshot(service, repo) {
-    const tracked = (
-        await service.run(repo, ["ls-files", "-z", "--cached"])
-    ).out
-        .split("\0")
-        .filter(Boolean);
-    const files = Object.create(null);
-    for (const file of [...new Set(tracked)].sort()) {
-        service.validateIndexPath(file);
-        const stat = await fs.lstat(path.join(repo, file)).catch((e) => {
-            if (e.code === "ENOENT") return undefined;
-            throw e;
-        });
-        if (stat && (!stat.isFile() || stat.size > service.maxOutput))
-            fail(
-                "MERGE_ABORT_UNSAFE",
-                "A merge file cannot be safely fingerprinted. Preserve work and recover outside Ignis."
-            );
-        files[file] = stat
-            ? `${stat.mode & 0o777}:${digest(await fs.readFile(path.join(repo, file)))}`
-            : "missing";
-    }
-    return {
-        files,
-        index: digest(
-            (await service.run(repo, ["ls-files", "--stage", "-z"])).out
-        ),
-    };
-}
 async function owner(repo) {
     if (
         typeof process.getuid !== "function" ||
@@ -363,7 +329,7 @@ async function owner(repo) {
     )
         fail(
             "OWNERSHIP",
-            "Run Ignis as the non-root vault owner before merging or aborting.",
+            "Run Ignis as the non-root vault owner before merging or marking resolved.",
             403
         );
 }
@@ -447,15 +413,6 @@ async function start(service, repo, input) {
             "STALE_MERGE_STATE",
             "Repository changed during merge. Preserve files and inspect Git state."
         );
-    await fs.writeFile(
-        await gitPath(service, repo, "obsidian-git-merge.json"),
-        JSON.stringify({
-            head: before.head,
-            mergeHead: after.mergeHead,
-            snapshot: await snapshot(service, repo),
-        }),
-        { mode: 0o600 }
-    );
     await report(service, repo, input.vaultId, after);
     if (failure && failure.code !== "GIT_FAILED") throw failure;
     return after;
@@ -540,97 +497,6 @@ async function resolve(service, repo, input) {
     await report(service, repo, input.vaultId, after);
     return after;
 }
-async function abort(service, repo, input) {
-    await owner(repo);
-    const current = await state(service, repo);
-    if (current.operation !== "merge")
-        fail(
-            "UNSUPPORTED_OPERATION",
-            "Abort merge requires an active normal merge."
-        );
-    if (
-        input.confirmed !== true ||
-        !oid(input.expectedMergeHead) ||
-        input.expectedMergeHead !== current.mergeHead ||
-        input.expectedHead !== current.head
-    )
-        fail("STALE_MERGE_STATE", "Confirm the current merge before aborting.");
-    let saved;
-    try {
-        saved = JSON.parse(
-            await fs.readFile(
-                await gitPath(service, repo, "obsidian-git-merge.json"),
-                "utf8"
-            )
-        );
-    } catch {
-        fail(
-            "MERGE_ABORT_UNSAFE",
-            "No trustworthy merge snapshot is available. Preserve your work and abort in an authorized Git environment."
-        );
-    }
-    if (
-        saved.head !== current.head ||
-        saved.mergeHead !== current.mergeHead ||
-        JSON.stringify(saved.snapshot) !==
-            JSON.stringify(await snapshot(service, repo))
-    )
-        fail(
-            "MERGE_ABORT_UNSAFE",
-            "Files or the index changed after merge started. Preserve your resolution edits before aborting outside Ignis."
-        );
-    await service.checkPendingWrites(repo);
-    const untracked = (
-        await service.run(repo, [
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "-z",
-        ])
-    ).out
-        .split("\0")
-        .filter(Boolean);
-    const hashes = await Promise.all(
-        untracked.map(async (file) => [
-            file,
-            digest(await fs.readFile(path.join(repo, file))),
-        ])
-    );
-    try {
-        await service.run(repo, ["merge", "--abort"]);
-    } catch {
-        fail(
-            "MERGE_ABORT_UNSAFE",
-            "Git refused abort. Merge state and files were retained; preserve your work and inspect the repository outside Ignis."
-        );
-    }
-    const after = await state(service, repo);
-    if (
-        after.operation !== "none" ||
-        after.unresolvedPaths.length ||
-        after.head !== saved.head ||
-        (await service.status(repo)).all.some((v) => v.index !== "?")
-    )
-        fail(
-            "MERGE_ABORT_UNSAFE",
-            "Abort finished with unexpected repository state. Inspect files before continuing."
-        );
-    for (const [file, hash] of hashes)
-        if (digest(await fs.readFile(path.join(repo, file))) !== hash)
-            fail(
-                "MERGE_ABORT_UNSAFE",
-                "An untracked file changed during abort. Inspect repository state."
-            );
-    await fs.unlink(await gitPath(service, repo, "obsidian-git-merge.json"));
-    await report(
-        service,
-        repo,
-        input.vaultId,
-        after,
-        "Merge aborted; pre-merge HEAD and tracked state verified."
-    );
-    return after;
-}
 async function report(service, repo, vaultId, current, reason) {
     const branch = await service.branch(repo);
     const status = await service.status(repo);
@@ -653,7 +519,6 @@ module.exports = {
     stages,
     start,
     resolve,
-    abort,
     report,
     gitPath,
     digest,

@@ -151,7 +151,6 @@ const context = {
                         mergeHead: "b".repeat(40),
                         unresolvedPaths: [],
                         canCommitMerge: true,
-                        canAbortMerge: true,
                     },
                 })
             );
@@ -187,7 +186,6 @@ const context = {
                             },
                         ],
                         canCommitMerge: false,
-                        canAbortMerge: true,
                     },
                     contents: {
                         base: value,
@@ -232,6 +230,13 @@ plugin
     .then(async () => {
         if (!plugin.gitReady || spawned || plugin.useSimpleGit)
             throw new Error("Ignis native initialization regression");
+        if (
+            typeof plugin.gitActions.abortMerge !== "undefined" ||
+            typeof plugin.gitManager.abortMerge !== "undefined"
+        )
+            throw new Error(
+                "Removed merge abort functionality is still exposed"
+            );
         console.log(
             "Production bundle selected Ignis backend without spawning native Git."
         );

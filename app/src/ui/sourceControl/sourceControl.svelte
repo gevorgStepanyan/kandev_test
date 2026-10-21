@@ -603,33 +603,6 @@
             {/if}
         </div>
     </div>
-    {#if mergeState?.kind === "diverged"}
-        <button
-            disabled={loading || committing}
-            onclick={() =>
-                plugin.promiseQueue.addTask(() =>
-                    plugin.gitActions.mergeIncomingChanges()
-                )}>Merge incoming changes</button
-        >
-    {:else if mergeState?.operation === "merge"}
-        <p>
-            {mergeState.unresolvedPaths.length
-                ? `${mergeState.unresolvedPaths.length} unresolved Git paths. Save and mark each resolved.`
-                : "All paths resolved; finish merge with Commit."}
-        </p>
-        <button
-            disabled={loading || committing}
-            onclick={() =>
-                plugin.promiseQueue.addTask(() =>
-                    plugin.gitActions.abortMerge()
-                )}>Abort merge</button
-        >
-    {:else if mergeState && mergeState.operation !== "none"}
-        <p>
-            {mergeState.operation} in progress. Inspect status and diffs; finish this
-            operation outside Ignis.
-        </p>
-    {/if}
     <div class="git-commit-msg">
         <textarea
             {rows}

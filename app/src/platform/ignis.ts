@@ -45,8 +45,6 @@ export function commandForRuntime(
         !isIgnis() ||
         [
             "pull",
-            "merge-incoming-changes",
-            "abort-merge",
             "commit",
             "commit-specified-message",
             "commit-smart",

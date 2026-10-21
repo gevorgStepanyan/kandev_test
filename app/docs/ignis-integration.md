@@ -29,12 +29,11 @@ Manual **Pull** fetches the actual upstream, fast-forwards when possible, and
 starts a normal pending merge when histories diverge. It requires a clean
 worktree and leaves real index stages and conflict markers available for review.
 Startup/scheduled Pull remains fast-forward-only and never starts a diverged
-merge. The separately confirmed **Merge incoming changes** action also remains
-available. A normal merge stays pending until Commit. Resolve text conflicts in the normal editor, save, switch to
+merge. A normal merge stays pending until Commit. Resolve text conflicts in the normal editor, save, switch to
 reading view and **Mark resolved**; finish using the existing **Commit** flow.
-During merges, every Commit mode uses only the intended staged set. Confirmed
-Abort merge is conservative and blocks if tracked files or the index changed
-after the merge began. It never substitutes a hard reset.
+During merges, every Commit mode uses only the intended staged set. The sidebar
+uses the local plugin's existing controls. No server-specific abort or extra
+merge buttons/commands are provided.
 
 Diff View and read-only Split Diff View show server working-tree/index snapshots,
 including deletions and renames. Binary/oversized files show explicit notices.
@@ -58,7 +57,7 @@ pilot validates at most 100,000 filesystem entries and limits each Git command
 to 60 seconds/8 MiB output. Browser requests have a 120-second timeout; if a
 request times out, inspect repository state before retrying.
 
-Before Pull, Merge, Abort merge or staging, save notes and **close editable Markdown panes or switch them to
+Before Pull or staging, save notes and **close editable Markdown panes or switch them to
 reading view**. Pending/failed/retrying Ignis writes block these operations too. This conservative
 rule avoids confusing disk state with unsaved editor buffers. Do not edit the
 vault from other tabs or external programs during a Git mutation; the plugin's lock
@@ -177,8 +176,8 @@ await fetch(
 - Missing upstream: set the intended upstream in an authorized Git environment;
   the pilot does not guess a remote branch.
 - Dirty: save/preserve changes and allow writes to settle before retrying.
-- Diverged: review and explicitly select Merge incoming changes.
-- Unfinished merge: resolve/mark each path and Commit, or safely Abort merge.
+- Diverged: use manual Pull to integrate incoming changes.
+- Unfinished merge: resolve/mark each path and Commit.
   Rebase/cherry-pick resolution remains outside Ignis.
 - Stale files: ensure the WebSocket is connected; use **Ignis: Refresh vault from
   disk**. A reconciliation failure after applied changes is reported as a

@@ -50,7 +50,7 @@ export class MergeConflictModal extends Modal {
         contentEl.createEl("h3", { text: "Finish the merge" });
         contentEl.createEl("p", {
             text: isIgnis()
-                ? "After all Git paths are resolved, review the staged diff and Commit to finish the merge. Abort merge requires confirmation and is blocked after resolution edits. Push remains unavailable in Ignis."
+                ? "After all Git paths are resolved, review the staged diff and Commit to finish the merge. Push remains unavailable in Ignis."
                 : "After the Conflicts section is empty, enter a commit message and commit the staged changes. This finishes the merge. You can then push normally.",
         });
 

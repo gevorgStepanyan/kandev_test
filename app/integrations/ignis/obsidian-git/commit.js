@@ -292,17 +292,6 @@ async function commit(service, repo, input) {
                 merge,
                 "Merge complete; two-parent commit verified: " + next
             );
-            await fs
-                .unlink(
-                    await require("./merge").gitPath(
-                        service,
-                        repo,
-                        "obsidian-git-merge.json"
-                    )
-                )
-                .catch((e) => {
-                    if (e.code !== "ENOENT") throw e;
-                });
         }
         return {
             status: "committed",

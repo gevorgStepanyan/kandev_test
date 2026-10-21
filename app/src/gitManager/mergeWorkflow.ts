@@ -16,7 +16,6 @@ export interface MergeState {
         availableStages: number[];
     }[];
     canCommitMerge: boolean;
-    canAbortMerge: boolean;
 }
 export interface FileContent {
     kind: "text" | "missing" | "binary" | "oversized" | "unsupported";
@@ -38,7 +37,6 @@ export interface MergeWorkflow {
     getMergeState(): Promise<MergeState>;
     getConflictDetails(path: string): Promise<ConflictDetails>;
     startMerge(state: MergeState): Promise<void>;
-    abortMerge(state: MergeState): Promise<void>;
     markResolved(path: string): Promise<void>;
     getFileContent(path: string, source: string): Promise<FileContent>;
 }

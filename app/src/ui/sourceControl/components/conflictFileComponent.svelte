@@ -13,14 +13,12 @@
 
     let { path, count, view, manager }: Props = $props();
     let button: HTMLElement | undefined = $state();
-    let reviewButton: HTMLElement | undefined = $state();
     let resolvedIcon: HTMLElement | undefined = $state();
 
     let vaultPath = $derived(manager.getRelativeVaultPath(path));
     let side = $derived(getTooltipSide(view.leaf));
 
     $effect(() => {
-        if (reviewButton) setIcon(reviewButton, "git-compare");
         if (button) setIcon(button, count === 0 ? "plus" : "check");
     });
 
@@ -69,17 +67,6 @@
         </div>
         <div class="git-tools">
             <div class="buttons">
-                {#if manager.mergeWorkflow}
-                    <div
-                        aria-label="Review base / ours / theirs"
-                        bind:this={reviewButton}
-                        class="clickable-icon"
-                        onclick={(event) => {
-                            event.stopPropagation();
-                            view.plugin.gitActions.reviewConflict(path);
-                        }}
-                    ></div>
-                {/if}
                 <div
                     aria-label="Mark resolved"
                     bind:this={button}

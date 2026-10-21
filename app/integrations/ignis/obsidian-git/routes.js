@@ -81,11 +81,6 @@ function mountRoutes(router, service, options) {
     for (const [route, action, fields] of [
         ["/merge", "start", ["expectedHead", "expectedUpstream", "confirmed"]],
         [
-            "/merge/abort",
-            "abort",
-            ["expectedHead", "expectedMergeHead", "confirmed"],
-        ],
-        [
             "/mark-resolved",
             "resolve",
             [

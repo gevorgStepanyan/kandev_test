@@ -47,15 +47,14 @@
 - The reference server exposes no session/per-user vault authorization API. Existing enabled-vault/origin checks require the deployment's authenticated, single-owner proxy boundary; they are not authentication themselves. See `COMMIT.md`.
 - Frontend/handler/command and real-repository backend tests run locally as part of `pnpm run all`. `TESTING_commit.md` and `TESTING_conflicts.md` list manual commands; deployment acceptance remains pending.
 
-## Diffs and explicit merge resolution
+## Diffs and merge resolution
 
-- The existing service/router now expose `/diff`, `/content`, `/merge-state`, `/conflicts`, `/merge`, `/mark-resolved` and `/merge/abort`, using the same origin/header/vault validation and repository lock.
-- Pull remains fetch plus fast-forward only. Divergence exposes an explicit confirmed Merge action pinned to the reviewed HEAD/upstream OIDs; dirty trees are rejected. Normal merge uses `--no-commit --no-ff`, preserves true stages and never auto-selects a winner.
+- The existing service/router now expose `/diff`, `/content`, `/merge-state`, `/conflicts`, `/merge` and `/mark-resolved`, using the same origin/header/vault validation and repository lock.
+- Manual Pull fetches and integrates divergence under the repository lock; boot/scheduled Pull remains fast-forward-only. Dirty trees are rejected. Normal merge uses `--no-commit --no-ff`, preserves true stages and never auto-selects a winner.
 - Status reconstructs merge/rebase/cherry-pick/other state and orphaned unmerged entries from native Git after reload/restart. Unsafe automatic operations remain blocked.
 - Unified and read-only split diffs show actual staged/unstaged snapshots. Text/binary/oversized/missing content is explicit; content sources are a fixed server enum. Status and diff reads disable optional index writes.
 - Existing CodeMirror per-block conflict controls edit through the normal adapter. Reading view, clean write state, browser/server hashes, explicit confirmation and server revalidation gate Mark resolved. Deletion and intentional literal markers require explicit acknowledgement. Complex/binary conflicts retain manual-resolution guidance.
 - Existing Commit completes a resolved normal merge with its staged set, never automatically stages unrelated work, disallows Amend and verifies both parents/tree/final state. Identical resulting trees still create a real merge commit with zero changed files.
-- Confirmed Abort uses a persisted post-merge fingerprint, refuses changed tracked files/index or missing snapshots, invokes only `git merge --abort`, and verifies restored tracked state/HEAD and unrelated untracked bytes. No destructive fallback exists.
 - Reports append state transitions only to unchanged integration-owned untracked files; tracked, edited and user-owned reports are preserved. Git index/metadata remain authoritative.
 - Refreshes cover mutations, file events, reconnect/focus/online and open diff views. Merge-route failures also request Ignis cache reconciliation because Git may already have changed files. Rebase/cherry-pick operations remain inspection-only.
 - See `CONFLICTS.md` for discovery/contracts/limits and root `TESTING_conflicts.md` for local tests and manual deployment acceptance. The `ignis/` reference checkout remains unchanged.
@@ -102,9 +101,25 @@
 - A typed `merge-pending` result prevents false up-to-date/success notices and
   refreshes status/editor controls and Ignis caches, including partial failures.
 - This replaces the earlier requirement for a second Merge click after manual
-  Pull, per the updated user workflow. The separate confirmed Merge action is
-  still available. Deploy browser and server changes together.
+  Pull, per the updated user workflow. The separate Merge control has since been removed to match the local UI. Deploy browser and server changes together.
 - Validation for this update: `pnpm run all` passed all checks, including 251
   Vitest tests and 95 server tests. The production bundle smoke test also
   exercised manual Pull's pending-merge result successfully. Live deployment
   verification remains in `TESTING_conflicts.md`.
+
+## Removed server-only merge controls
+
+- Removed Abort merge from the sidebar, command palette, frontend capability and
+  transport validation, server route and native service. Abort-only snapshots
+  are no longer created, checked or cleaned up during Commit. No repository
+  state is changed as part of this removal; legacy metadata is ignored.
+- Removed the extra Merge incoming changes sidebar control/command, standalone
+  status panel and conflict-review icon. Manual Pull still integrates divergence
+  and existing conflict editing/Mark resolved/Commit behavior remains available.
+- Tests cover absence of the route/capability/commands and extra sidebar
+  controls, refusal of direct unsupported abort actions without data changes,
+  and successful Commit of a pending merge carrying legacy metadata.
+- Validation: `pnpm run all` passed TypeScript, Svelte, formatting, lint, 252
+  Vitest tests and 95 server tests. The production build/bundle smoke test also
+  passed, including checks that abort methods are absent and manual Pull and
+  conflict editing still work.

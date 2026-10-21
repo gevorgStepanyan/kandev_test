@@ -65,7 +65,7 @@ Commit and conflict workflows; live deployment acceptance remains separate. Exis
 ## Diffs and merge conflicts
 
 See [CONFLICTS.md](CONFLICTS.md) for the discovery inventory, actual API contracts,
-explicit divergence/merge/resolve/Commit/Abort workflow, write and abort safety
+Pull/merge/resolve/Commit workflow, browser-write safety
 policies, and supported conflict kinds. See
 [TESTING_conflicts.md](../../../TESTING_conflicts.md) for local commands and the
 manual deployment checklist. Install the complete directory including `merge.js`;

@@ -20,7 +20,7 @@ const diverged: MergeState = {
     head,
     upstream: { ref: "origin/main", oid: upstream },
     unresolvedPaths: [],
-    canAbortMerge: false,
+
     canCommitMerge: false,
 };
 const merging: MergeState = {
@@ -31,7 +31,6 @@ const merging: MergeState = {
     unresolvedPaths: [
         { path: "note.md", kind: "content", availableStages: [1, 2, 3] },
     ],
-    canAbortMerge: true,
 };
 const content = (text: string) => ({
     kind: "text",
@@ -412,7 +411,7 @@ describe("explicit merge workflow", () => {
     });
 
     it.each(["pending", "retrying"] as const)(
-        "blocks merge and abort while %s writes remain",
+        "blocks merge while %s writes remain",
         async (field) => {
             const { manager } = setup();
             window.__ignis!.writes!.getDetail = () => ({
@@ -422,10 +421,6 @@ describe("explicit merge workflow", () => {
             });
             choose.mockResolvedValueOnce("Merge incoming changes");
             await expect(manager.startMerge(diverged)).rejects.toMatchObject({
-                code: "BROWSER_DIRTY",
-            });
-            choose.mockResolvedValueOnce("Abort merge");
-            await expect(manager.abortMerge(merging)).rejects.toMatchObject({
                 code: "BROWSER_DIRTY",
             });
             expect(fetchMock).not.toHaveBeenCalled();
@@ -553,32 +548,6 @@ describe("explicit merge workflow", () => {
         expect(plugin.setPluginState).toHaveBeenLastCalledWith({
             operation: GitOperation.idle,
         });
-        expect(plugin.app.workspace.trigger).toHaveBeenCalledWith(
-            "obsidian-git:refresh"
-        );
-    });
-    it("requires abort confirmation and does not announce success on unsafe abort", async () => {
-        const { manager, plugin } = setup();
-        await manager.abortMerge(merging);
-        expect(fetchMock).not.toHaveBeenCalled();
-        choose.mockResolvedValueOnce("Abort merge");
-        fetchMock.mockResolvedValueOnce(
-            response(
-                {
-                    error: {
-                        code: "MERGE_ABORT_UNSAFE",
-                        message: "Preserve edits",
-                    },
-                },
-                409
-            )
-        );
-        await expect(manager.abortMerge(merging)).rejects.toMatchObject({
-            code: "MERGE_ABORT_UNSAFE",
-        });
-        expect(plugin.displayMessage).not.toHaveBeenCalledWith(
-            expect.stringContaining("Merge aborted")
-        );
         expect(plugin.app.workspace.trigger).toHaveBeenCalledWith(
             "obsidian-git:refresh"
         );

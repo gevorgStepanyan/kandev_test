@@ -4,13 +4,18 @@ import { flushSync, mount, unmount } from "svelte";
 import { TFile } from "obsidian";
 import StagedFile from "src/ui/sourceControl/components/stagedFileComponent.svelte";
 import ConflictFile from "src/ui/sourceControl/components/conflictFileComponent.svelte";
+import SourceControl from "src/ui/sourceControl/sourceControl.svelte";
 import Tree from "src/ui/sourceControl/components/treeComponent.svelte";
 import Tools from "src/tools";
 import { GitActions } from "src/gitActions";
 import { IgnisGitManager } from "src/gitManager/ignisGit";
 import DiffView from "src/ui/diff/diffView";
 import SplitDiffView from "src/ui/diff/splitDiffView";
-import { DIFF_VIEW_CONFIG, SPLIT_DIFF_VIEW_CONFIG } from "src/constants";
+import {
+    DEFAULT_SETTINGS,
+    DIFF_VIEW_CONFIG,
+    SPLIT_DIFF_VIEW_CONFIG,
+} from "src/constants";
 import type GitView from "src/ui/sourceControl/sourceControl";
 import type { DiffViewState } from "src/types";
 import { FileType } from "src/types";
@@ -124,6 +129,71 @@ function setup(diffStyle: "git_unified" | "split" = "git_unified") {
 }
 
 describe("rendered Source Control clicks in Ignis", () => {
+    it("uses the existing conflict list without extra merge buttons or a review icon", async () => {
+        const { plugin, view, target } = setup();
+        plugin.settings = { ...DEFAULT_SETTINGS };
+        plugin.gitReady = true;
+        plugin.state.mergeInProgress = true;
+        plugin.cachedStatus = {
+            all: [],
+            staged: [],
+            changed: [],
+            conflicted: ["note.md"],
+            stagedOutsideVault: 0,
+            conflictedOutsideVault: 0,
+        };
+        plugin.getUnpushedCommits = vi.fn().mockResolvedValue(0);
+        Object.assign(view, { registerEvent: vi.fn() });
+        Object.assign(plugin.app.workspace, {
+            on: vi.fn(() => ({})),
+            offref: vi.fn(),
+        });
+        Object.assign(plugin.app.vault, {
+            on: vi.fn(() => ({})),
+            offref: vi.fn(),
+            adapter: {
+                read: vi
+                    .fn()
+                    .mockResolvedValue(
+                        "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> incoming\n"
+                    ),
+            },
+        });
+        vi.spyOn(
+            plugin.gitManager.mergeWorkflow!,
+            "getMergeState"
+        ).mockResolvedValue({
+            operation: "merge",
+            kind: "merge-conflicted",
+            head: "a".repeat(40),
+            mergeHead: "b".repeat(40),
+            unresolvedPaths: [
+                {
+                    path: "note.md",
+                    kind: "content",
+                    availableStages: [1, 2, 3],
+                },
+            ],
+            canCommitMerge: false,
+        });
+        flushSync(() =>
+            components.push(
+                mount(SourceControl, { target, props: { plugin, view } })
+            )
+        );
+        await vi.waitFor(() =>
+            expect(target.querySelector('[data-path="note.md"]')).not.toBeNull()
+        );
+        expect(target.querySelector("textarea")).not.toBeNull();
+        expect(
+            target.querySelector('[aria-label="Mark resolved"]')
+        ).not.toBeNull();
+        expect(
+            target.querySelector('[aria-label="Review base / ours / theirs"]')
+        ).toBeNull();
+        expect(target.textContent).not.toContain("Abort merge");
+        expect(target.textContent).not.toContain("Merge incoming changes");
+    });
     it("opens staged split diffs using only allowed server head/index content sources", async () => {
         const { plugin, view, target, rendered } = setup("split");
         const fetchMock = vi.fn((url: string) =>
@@ -309,7 +379,6 @@ describe("rendered Source Control clicks in Ignis", () => {
                                     },
                                 ],
                                 canCommitMerge: false,
-                                canAbortMerge: true,
                             },
                             contents: {
                                 base: text,

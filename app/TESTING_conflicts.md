@@ -22,7 +22,7 @@ pnpm run test:ignis-server
 The frontend tests use the Obsidian stub and mocked HTTP. Server tests create
 and remove temporary native repositories and local remotes. They cover true
 merge state/stages, explicit/stale mutations, text/add-add/modify-delete/binary
-conflicts, resolution races, safe/unsafe abort, restart reconstruction, true
+conflicts, resolution races, removed-abort protection, restart reconstruction, true
 merge commits (including identical resulting trees), staged-only merge policy,
 reports, read-only diffs/index bytes, literal filenames, output limits,
 unsupported operations, write checks, locks and the existing route restrictions.
@@ -102,11 +102,6 @@ Disable other Git jobs for this disposable vault while verifying this workflow.
 - [ ] Review the staged diff and finish with the existing Commit button. A
       failed commit preserves the message/resolutions. A successful commit clears
       merge state and does not stage unrelated working edits or untracked notes.
-- [ ] In a fresh fixture, start a merge and **before resolving** create an
-      unrelated untracked note. Confirm Abort merge. Verify local commits, the note
-      and pre-merge tracked content survive. Cancel abort leaves everything intact.
-- [ ] In another fixture, edit/stage a resolution before Abort. It must block
-      with recovery guidance and preserve edits. No hard-reset fallback is allowed.
 - [ ] Reload the browser, disconnect/reconnect WebSocket, or restart the container
       during an unresolved merge. Conflicts/stages and merge state reconstruct from
       Git. If temporary fixture storage is not persistent across container recreation,
@@ -133,9 +128,9 @@ git -C "$TEST_VAULT_PATH" log -1 --format='%H %P'
 git -C "$TEST_VAULT_PATH" rev-parse --verify MERGE_HEAD
 ```
 
-The last command is expected to fail after completion or successful abort.
+The last command is expected to fail after merge completion.
 A finished merge has two parents; `ls-files -u` is empty. Confirm the report
-appends the corresponding completion/abort event and remains excluded. Remove
+appends the corresponding completion event and remains excluded. Remove
 the disposable vault from Ignis and delete only the recorded fixture paths when
 finished. Live deployment/editor/cache behavior remains a manual acceptance step.
 
@@ -185,3 +180,16 @@ clicks filenames in flat/tree layouts through the real Tools, GitActions and
 Ignis manager. It covers unified/staged split rendering, conflict editor opening,
 and pane-opening error reporting. `pnpm run test:ignis-bundle` also checks staged
 diff and conflict-editor actions in the actual generated `main.js`.
+
+## Removed server-only merge controls
+
+- [ ] The Source Control pane has no Abort merge or Merge incoming changes
+      button, standalone merge status panel, or extra stage-review icon. The
+      existing merge-help icon, conflict list, resolution editor, Mark resolved
+      and Commit controls continue to work.
+- [ ] The command palette has no server-specific merge/abort command. The
+      `/merge/abort` route is absent; requests to it cannot mutate the index or
+      working files.
+- [ ] A pending merge created with the previous integration still opens its
+      conflicts, stages resolutions and completes a real two-parent commit.
+      Old abort snapshot metadata is ignored and left untouched.

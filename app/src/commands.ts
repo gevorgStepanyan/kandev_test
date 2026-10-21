@@ -3,7 +3,7 @@ import type { Command } from "obsidian";
 import { Notice, TFolder, WorkspaceLeaf } from "obsidian";
 import { HISTORY_VIEW_CONFIG, SOURCE_CONTROL_VIEW_CONFIG } from "./constants";
 import { SimpleGit } from "./gitManager/simpleGit";
-import ObsidianGit from "./main";
+import type ObsidianGit from "./main";
 import { openHistoryInGitHub, openLineInGitHub } from "./openInGitHub";
 import { IgnoreModal } from "./ui/modals/ignoreModal";
 import { togglePreviewHunk } from "./editor/signs/tooltip";
@@ -14,25 +14,6 @@ export function addCommmands(plugin: ObsidianGit) {
         plugin.addCommand(
             commandForRuntime(command, () => plugin.displayIgnisFutureFeature())
         );
-
-    for (const [id, name, action] of [
-        [
-            "merge-incoming-changes",
-            "Merge incoming changes",
-            () => plugin.gitActions.mergeIncomingChanges(),
-        ],
-        ["abort-merge", "Abort merge", () => plugin.gitActions.abortMerge()],
-    ] as const)
-        addCommand({
-            id,
-            name,
-            checkCallback: (checking) => {
-                if (!plugin.gitReady || !plugin.gitManager.mergeWorkflow)
-                    return false;
-                if (!checking) plugin.promiseQueue.addTask(action);
-                return true;
-            },
-        });
 
     addCommand({
         id: "edit-gitignore",
