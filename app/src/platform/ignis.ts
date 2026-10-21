@@ -45,6 +45,9 @@ export function commandForRuntime(
         !isIgnis() ||
         [
             "pull",
+            "push2",
+            "push",
+            "commit-push-specified-message",
             "commit",
             "commit-specified-message",
             "commit-smart",

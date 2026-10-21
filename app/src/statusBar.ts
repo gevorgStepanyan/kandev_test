@@ -1,3 +1,4 @@
+import { isIgnis } from "./platform/ignis";
 import { setIcon, moment } from "obsidian";
 import type ObsidianGit from "./main";
 import { GitOperation, type GitProgress } from "./types";
@@ -300,6 +301,7 @@ export class StatusBar {
     private async refreshCommitTimestamp() {
         this.lastCommitTimestamp =
             await this.plugin.gitManager.getLastCommitTime();
+        if (isIgnis()) this.unPushedCommits = undefined;
         this.unPushedCommits = await this.plugin.getUnpushedCommits();
     }
 

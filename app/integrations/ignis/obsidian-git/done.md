@@ -136,3 +136,39 @@
   Vitest tests and 95 server tests. The production build/bundle smoke test
   passed. Deploy the rebuilt browser `main.js`; no server update is required
   for this change.
+
+## Push and manual Commit-and-sync
+
+- Existing sidebar Push and palette `push2` publish committed history through the
+  existing manager, transport, router, native executor and repository lock.
+  Palette `push` remains Commit-and-sync; existing menu/message flows compose
+  Commit, optional Pull and Push. Nothing-to-commit may publish existing history;
+  incomplete Commit/Pull and pending merges stop synchronization.
+- Push resolves the effective configured destination, including triangular
+  remotes and one exact branch mapping. It permits unambiguous first publication,
+  checks live remote state, uses one explicit non-force refspec, verifies completion
+  and preserves index/worktree/report state. Unsupported config and advanced
+  squash/submodule options are explicitly refused.
+- `/push-state` supplies live readiness and actual outgoing commit counts. Browser
+  caches are invalidated after mutations. Push errors release busy state and reuse
+  existing notices without turning remote rejection into local merge conflicts.
+- Explicit separate browser auto-push intervals are enabled with pause, disable,
+  readiness and unload guards. Automatic commit/sync remains disabled. No server
+  scheduler is introduced; unattended scheduling remains future work.
+- Existing proxy authentication, vault/origin validation, safe process handling
+  and shared locking remain the security boundary. No new auth or multi-user
+  isolation is claimed. The reference `ignis/` tree is unchanged.
+- See `PUSH.md` for architecture/security/limitations and root `TESTING_pushing.md`
+  for actual local results and pending deployment acceptance checks.
+
+### Local Push validation
+
+- `pnpm run all` passed TypeScript, Svelte (zero errors/warnings), formatting,
+  lint, 301 Vitest tests across 20 files and 148 server tests. A final server-only
+  configuration guard and regression test passed `pnpm run test:ignis-server`
+  with 149 tests (54 new Push tests).
+  Zero failed, cancelled or skipped tests in the final run.
+- `pnpm run test:ignis-bundle` passed the production build and browser smoke checks,
+  including actual Push orchestration over HTTP with native processes unavailable.
+- Extended formatting checks passed. The tracked root `main.js` is rebuilt.
+  No dependency/lockfile changes or live deployment/SSH/external-remote tests.

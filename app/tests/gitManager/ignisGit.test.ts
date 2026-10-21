@@ -112,13 +112,16 @@ describe("IgnisGitManager", () => {
         expect((await manager.status()).staged).toEqual([file]);
         expect(await manager.branchInfo()).toEqual(state.branch);
         expect(await manager.isMergeInProgress()).toBe(true);
+        fetchMock.mockResolvedValueOnce(
+            response({ configured: true, canPush: true, unpushedCommits: 2 })
+        );
         expect(await manager.getUnpushedCommits()).toBe(2);
         expect(await manager.getLastCommitTime()).toEqual(
             new Date(state.lastCommitTime)
         );
         expect(await manager.getRemotes()).toEqual(["origin"]);
         expect(await manager.getConfig("branch.main.remote")).toBe("origin");
-        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
     it("pulls via a fixed same-origin endpoint and restores idle", async () => {
         const { manager, plugin } = setup();
@@ -243,7 +246,6 @@ describe("IgnisGitManager", () => {
     it("blocks unsupported backend methods without sending a request", () => {
         const { manager } = setup();
         for (const action of [
-            () => manager.push(),
             () => manager.discardAll(),
             () => manager.init(),
             () => manager.clone(),
@@ -855,6 +857,9 @@ describe("Ignis manual commits", () => {
             operation: GitOperation.idle,
         });
         const count = fetchMock.mock.calls.length;
+        fetchMock.mockResolvedValueOnce(
+            response({ configured: true, canPush: true, unpushedCommits: 1 })
+        );
         await manager.getUnpushedCommits();
         expect(fetchMock.mock.calls.length).toBe(count + 1);
     });
@@ -872,7 +877,7 @@ describe("Ignis manual commits", () => {
         expect(await manager.commit({ message: "index snapshot" })).toBe(2);
     });
 
-    it("keeps automatic commits, sync, Push and Amend unavailable without requests", async () => {
+    it("keeps automatic commits and Amend unavailable without requests", async () => {
         const { manager, actions } = commitSetup();
         await expect(
             manager.commit({ message: "amend", amend: true })
@@ -883,10 +888,6 @@ describe("Ignis manual commits", () => {
         expect(
             (await actions.commit({ fromAuto: false, amend: true })).status
         ).toBe("failed");
-        expect(
-            (await actions.commitAndSync({ fromAutoBackup: false })).status
-        ).toBe("failed");
-        expect((await actions.push()).status).toBe("failed");
         expect(fetchMock).not.toHaveBeenCalled();
     });
 });

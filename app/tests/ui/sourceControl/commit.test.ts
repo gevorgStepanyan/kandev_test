@@ -74,6 +74,13 @@ function ui(ignis = true) {
         app: { workspace: { trigger } },
         gitActions: {
             commit,
+            commitAndSync: vi.fn().mockResolvedValue({
+                status: "success",
+                value: {
+                    status: "synced",
+                    commit: { status: "committed" },
+                },
+            }),
             stageAll: vi.fn().mockResolvedValue({ status: "success" }),
             unstageAll: vi.fn().mockResolvedValue({ status: "success" }),
             pullChangesFromRemote: vi
@@ -215,12 +222,13 @@ describe("Source Control commit handlers", () => {
         );
         items.get("Amend staged")!();
         items.get("Commit staged and sync")!();
+        await Promise.all(tasks);
         expect(commit).toHaveBeenCalledTimes(2);
         expect(notice).not.toHaveBeenCalled();
         expect(disabledItems.get("Commit staged")).toBe(false);
         expect(disabledItems.get("Stage all and commit")).toBe(false);
         expect(disabledItems.get("Amend staged")).toBe(true);
-        expect(disabledItems.get("Commit staged and sync")).toBe(true);
+        expect(disabledItems.get("Commit staged and sync")).toBe(false);
     });
 
     it("uses the same commit tooltips and menu labels as desktop without pilot text", () => {
@@ -237,7 +245,7 @@ describe("Source Control commit handlers", () => {
         ignis.handlers.showCommitMenu({ stopPropagation() {} });
         desktop.handlers.showCommitMenu({ stopPropagation() {} });
         expect([...ignis.items.keys()]).toEqual([...desktop.items.keys()]);
-        expect(ignis.handlers.canCommitAndSync("all")).toBe(false);
+        expect(ignis.handlers.canCommitAndSync("all")).toBe(true);
         expect(desktop.handlers.canCommitAndSync("all")).toBe(true);
         expect(ignis.handlers.canAmendStaged()).toBe(false);
         expect(desktop.handlers.canAmendStaged()).toBe(true);
@@ -261,15 +269,16 @@ describe("Source Control commit handlers", () => {
         expect(notice).not.toHaveBeenCalled();
     });
 
-    it("disabled Push and Discard do not enqueue actions or show placeholder notices", () => {
+    it("Push queues the existing action while Discard remains unavailable", async () => {
         const { handlers, plugin, notice, tasks } = ui();
         const event = { stopPropagation: vi.fn() };
         handlers.push();
         handlers.discard(event);
         expect(event.stopPropagation).toHaveBeenCalledOnce();
-        expect(plugin.gitActions.push).not.toHaveBeenCalled();
+        expect(plugin.gitActions.push).toHaveBeenCalledOnce();
+        await Promise.all(tasks);
         expect(plugin.gitActions.discardAll).not.toHaveBeenCalled();
-        expect(tasks).toHaveLength(0);
+        expect(tasks).toHaveLength(1);
         expect(notice).not.toHaveBeenCalled();
     });
 
@@ -295,7 +304,11 @@ describe("command-palette commit routes", () => {
         const plugin = {
             app: {},
             settings: {},
-            gitActions: { commit },
+            gitActions: {
+                commit,
+                push: vi.fn().mockResolvedValue({ status: "success" }),
+                commitAndSync: vi.fn().mockResolvedValue({ status: "success" }),
+            },
             addCommand: (command: Command) => commands.set(command.id, command),
             displayIgnisFutureFeature: notice,
             promiseQueue: {
@@ -333,7 +346,14 @@ describe("command-palette commit routes", () => {
         }
         commands.get("push2")!.callback!();
         commands.get("push")!.callback!();
-        expect(notice).toHaveBeenCalled();
+        await Promise.all(tasks);
+        expect(plugin.gitActions.push).toHaveBeenCalledOnce();
+        expect(plugin.gitActions.commitAndSync).toHaveBeenCalledWith({
+            fromAutoBackup: false,
+        });
+        expect(commands.get("push2")!.name).toBe("Push");
+        expect(commands.get("push")!.name).toBe("Commit-and-sync");
+        expect(notice).not.toHaveBeenCalled();
         expect(commit).toHaveBeenCalledTimes(6);
     });
 });

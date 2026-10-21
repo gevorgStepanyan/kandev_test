@@ -427,8 +427,9 @@ export class GitActions {
     async commitAndSync(
         options: CommitAndSyncOptions
     ): Promise<GitActionResult<CommitAndSyncResult>> {
-        return this.runReadyGitAction<CommitAndSyncResult>(() =>
-            this.performCommitAndSync(options)
+        return this.runReadyGitAction<CommitAndSyncResult>(
+            () => this.performCommitAndSync(options),
+            true
         );
     }
 
@@ -442,7 +443,17 @@ export class GitActions {
             this.plugin.settings.syncMethod == "reset" &&
             this.plugin.settings.pullBeforePush
         ) {
-            this.reportPullResult(await this.performPull());
+            const pull = await this.performPull();
+            this.reportPullResult(pull);
+            if (
+                isIgnis() &&
+                pull.status !== "updated" &&
+                pull.status !== "up-to-date"
+            )
+                throw new IgnisGitError(
+                    "SYNC_PULL_BLOCKED",
+                    "Synchronization stopped after Pull. Finish any pending merge or configure the upstream before syncing."
+                );
         }
 
         const commitResult = await this.performCommit({
@@ -468,7 +479,17 @@ export class GitActions {
             this.plugin.settings.syncMethod != "reset" &&
             this.plugin.settings.pullBeforePush
         ) {
-            this.reportPullResult(await this.performPull());
+            const pull = await this.performPull();
+            this.reportPullResult(pull);
+            if (
+                isIgnis() &&
+                pull.status !== "updated" &&
+                pull.status !== "up-to-date"
+            )
+                throw new IgnisGitError(
+                    "SYNC_PULL_BLOCKED",
+                    "Synchronization stopped after Pull. Finish any pending merge or configure the upstream before syncing."
+                );
         }
 
         if (this.plugin.settings.disablePush) {
@@ -792,8 +813,9 @@ export class GitActions {
     }
 
     async push(): Promise<GitActionResult<PushResult>> {
-        const actionResult = await this.runReadyGitAction<PushResult>(() =>
-            this.performPush()
+        const actionResult = await this.runReadyGitAction<PushResult>(
+            () => this.performPush(),
+            true
         );
         if (actionResult.status === "success") {
             this.reportPushResult(actionResult.value);
@@ -1301,6 +1323,14 @@ export class GitActions {
      * to create it automatically.
      */
     async isPushRemoteSet(): Promise<boolean> {
+        if (this.plugin.gitManager instanceof IgnisGitManager) {
+            const readiness = await this.plugin.gitManager.getPushState();
+            if (!readiness.configured)
+                this.plugin.displayMessage(
+                    "No push target configured. Configure the current branch destination outside Ignis."
+                );
+            return readiness.configured;
+        }
         if (
             this.plugin.settings.updateSubmodules ||
             (await this.canAutoSetupPushRemote())

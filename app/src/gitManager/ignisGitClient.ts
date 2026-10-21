@@ -1,6 +1,11 @@
 import { IgnisGitError } from "src/platform/ignis";
 import type { MergeState, FileContent, ConflictDetails } from "./mergeWorkflow";
-import type { BranchInfo, FileStatusResult, Status } from "src/types";
+import type {
+    BranchInfo,
+    FileStatusResult,
+    Status,
+    PushResult,
+} from "src/types";
 
 export interface IgnisRepositoryState {
     status: Status;
@@ -281,4 +286,63 @@ export function conflictDetails(value: unknown): ConflictDetails {
     for (const source of ["base", "ours", "theirs", "worktree"])
         fileContent(value.contents[source]);
     return value as unknown as ConflictDetails;
+}
+
+export interface IgnisPushState {
+    configured: boolean;
+    canPush: boolean;
+    unpushedCommits: number;
+}
+export function pushState(value: unknown): IgnisPushState {
+    if (
+        !record(value) ||
+        typeof value.configured !== "boolean" ||
+        typeof value.canPush !== "boolean" ||
+        !Number.isSafeInteger(value.unpushedCommits) ||
+        (value.unpushedCommits as number) < 0 ||
+        (value.canPush && (!value.configured || value.unpushedCommits === 0))
+    )
+        throw new IgnisGitError(
+            "INVALID_RESPONSE",
+            "Invalid Ignis push readiness response."
+        );
+    return value as unknown as IgnisPushState;
+}
+export function pushResult(value: unknown): PushResult {
+    if (record(value)) {
+        if (
+            value.status === "pushed" &&
+            (value.files === null ||
+                (Number.isSafeInteger(value.files) &&
+                    (value.files as number) >= 0))
+        )
+            return { status: "pushed", files: value.files as number | null };
+        if (value.status === "up-to-date") return { status: "up-to-date" };
+        if (value.status === "blocked") {
+            if (
+                value.reason === "no-branch" ||
+                value.reason === "merge-in-progress"
+            )
+                return { status: "blocked", reason: value.reason };
+            if (
+                value.reason === "conflicts" &&
+                Number.isSafeInteger(value.files) &&
+                (value.files as number) > 0
+            )
+                return {
+                    status: "blocked",
+                    reason: "conflicts",
+                    files: value.files as number,
+                };
+        }
+        if (
+            value.status === "skipped" &&
+            (value.reason === "no-upstream" || value.reason === "not-ready")
+        )
+            return { status: "skipped", reason: value.reason };
+    }
+    throw new IgnisGitError(
+        "INVALID_RESPONSE",
+        "Invalid Ignis push result. The remote may have changed; refresh before retrying."
+    );
 }

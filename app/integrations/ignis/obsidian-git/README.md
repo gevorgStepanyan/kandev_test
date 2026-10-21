@@ -70,3 +70,13 @@ policies, and supported conflict kinds. See
 [TESTING_conflicts.md](../../../TESTING_conflicts.md) for local commands and the
 manual deployment checklist. Install the complete directory including `merge.js`;
 existing origin, ownership, proxy authentication and vault settings still apply.
+
+## Push
+
+Install the complete directory including `push.js`. Existing **Push** and
+**Commit-and-sync** controls now use the native server backend. See [PUSH.md](PUSH.md)
+for destination configuration, supported protocols, server credential policy,
+no-force safeguards, browser timer limits and known advanced-option limitations.
+See [TESTING_pushing.md](../../../TESTING_pushing.md) for local results and the
+operator's deployment-only checklist. Authentication remains the existing trusted
+single-owner proxy boundary; protect the complete API prefix.

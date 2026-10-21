@@ -16,14 +16,18 @@ Successful pulls and new reports invoke Ignis's existing cache reconciliation,
 including ignored files; its WebSocket watcher updates browser caches and vault
 listeners. There is no second filesystem cache.
 
+See [Push policy and architecture](../integrations/ignis/obsidian-git/PUSH.md) and
+[local validation/deployment checklist](../TESTING_pushing.md) for configured target
+requirements, SSH/HTTPS credentials, non-force safety and Push troubleshooting.
+
 ## Supported features and limits
 
 Supported: repository requirements, status/branch/upstream/operation state,
 last commit time, unpushed counts, manual/boot/automatic Pull, staging/unstaging,
-manual Commit, staged/unstaged diffs, and explicit normal merge resolution.
-Desktop/mobile continue using their existing backends. Ignis ignores shared
-automatic commit/push settings; browser Pull timers are not an unattended server
-scheduler and pause during unfinished Git operations.
+manual Commit and Commit-and-sync, Push, staged/unstaged diffs, and explicit normal merge resolution.
+Desktop/mobile continue using their existing backends. Ignis keeps automatic commit/sync disabled, but permits explicitly configured
+separate auto-push intervals. Browser Pull/Push timers are best-effort, require an
+open browser and are not an unattended server scheduler.
 
 Manual **Pull** fetches the actual upstream, fast-forwards when possible, and
 starts a normal pending merge when histories diverge. It requires a clean
@@ -38,7 +42,7 @@ merge buttons/commands are provided.
 Diff View and read-only Split Diff View show server working-tree/index snapshots,
 including deletions and renames. Binary/oversized files show explicit notices.
 Complex conflicts and rebase/cherry-pick resolution require an authorized Git
-environment. Push, sync, standalone Fetch, discard, clone/init, branch/remotes,
+environment. Standalone Fetch, discard, clone/init, branch/remotes,
 history/blame, arbitrary commands and interactive hunk operations remain
 unavailable in Ignis.
 
@@ -198,7 +202,7 @@ operator verification. Smoke-test up-to-date and changed remote branches, note
 visibility after Pull, blocked local work, missing upstream and unsupported
 buttons before adopting this pilot. Keep separate repositories for these tests.
 
-For a later Push/history phase, extend explicit capabilities and fixed endpoints,
+For later history/automation phases, extend explicit capabilities and fixed endpoints,
 add shared workflow tests, and coordinate repository mutation with browser
 writes before adding more operations. Do not expand this API into arbitrary
 shell execution.

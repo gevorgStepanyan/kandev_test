@@ -9,6 +9,7 @@ class GitService {
     constructor(ctx, options = {}) {
         this.ctx = ctx;
         this.pendingWrites = options.pendingWrites;
+        this.pushTestRoot = options.pushTestRoot;
         this.timeout = options.timeout ?? 60000;
         this.maxOutput = options.maxOutput ?? 8 * 1024 * 1024;
         this.locks = new Set();
@@ -85,7 +86,9 @@ class GitService {
                     fail(
                         new GitServiceError(
                             "TIMEOUT",
-                            "Git timed out. Verify repository state before retrying.",
+                            args.includes("push")
+                                ? "Push timed out. The remote may have changed; inspect remote state before retrying."
+                                : "Git timed out. Verify repository state before retrying.",
                             504
                         )
                     ),
@@ -158,7 +161,27 @@ class GitService {
                 //     stderr: err.slice(0, 4000),
                 // });
                 let error;
-                if (/dubious ownership/i.test(err))
+                if (args.includes("push") && code === null)
+                    error = new GitServiceError(
+                        "PUSH_OUTCOME_UNCERTAIN",
+                        "Push was interrupted. Inspect remote state before retrying."
+                    );
+                else if (
+                    args.includes("push") &&
+                    /non-fast-forward|fetch first|stale info/i.test(err + out)
+                )
+                    error = require("./push").nonFastForward();
+                else if (
+                    args.includes("push") &&
+                    /remote rejected|hook declined|protected branch|pre-receive/i.test(
+                        err + out
+                    )
+                )
+                    error = new GitServiceError(
+                        "PUSH_REMOTE_REJECTED",
+                        "The remote rejected Push. Check branch protection and server-side hooks or permissions."
+                    );
+                else if (/dubious ownership/i.test(err))
                     error = new GitServiceError(
                         "OWNERSHIP",
                         "Git rejected vault ownership. Run Ignis with the vault owner's UID/GID.",
@@ -641,6 +664,36 @@ class GitService {
                 return `:(literal)${file.path}`;
             });
         if (paths.length) await this.run(repo, ["add", "-A", "--", ...paths]);
+    }
+
+    async pushReadiness(vaultId) {
+        return this.locked(vaultId, (repo) =>
+            require("./push").readiness(this, repo)
+        );
+    }
+
+    async push(vaultId) {
+        return this.locked(vaultId, async (repo) => {
+            const stat = await fs.stat(repo);
+            if (
+                typeof process.getuid !== "function" ||
+                process.getuid() === 0 ||
+                process.getuid() !== stat.uid
+            )
+                throw new GitServiceError(
+                    "OWNERSHIP",
+                    "Run Ignis as the non-root vault owner before pushing.",
+                    403
+                );
+            try {
+                const result = await require("./push").push(this, repo);
+                this.ctx.log?.(`Git Push: ${result.status}.`);
+                return result;
+            } catch (error) {
+                this.ctx.log?.(`Git Push failed: ${publicError(error).code}.`);
+                throw error;
+            }
+        });
     }
 
     async commit(vaultId, input) {

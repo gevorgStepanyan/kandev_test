@@ -115,6 +115,24 @@ const context = {
     Response,
     localStorage: { debug: "-simple-git" },
     fetch: async (url, init) => {
+        if (url.includes("/push-state?"))
+            return new Response(
+                JSON.stringify({
+                    configured: true,
+                    canPush: true,
+                    unpushedCommits: 1,
+                })
+            );
+        if (url.endsWith("/push")) {
+            if (
+                JSON.stringify(JSON.parse(init.body)) !==
+                JSON.stringify({ vaultId: "Main" })
+            )
+                throw new Error("Push payload contains arbitrary parameters");
+            return new Response(
+                JSON.stringify({ status: "pushed", files: null })
+            );
+        }
         if (url.includes("/state?"))
             return new Response(
                 JSON.stringify({
@@ -258,6 +276,19 @@ plugin
             );
         console.log(
             "Production bundle opened the Ignis staged diff and conflict editor."
+        );
+        const pushed = await plugin.gitActions.push();
+        if (
+            pushed.status !== "success" ||
+            pushed.value.status !== "pushed" ||
+            pushed.value.files !== null ||
+            spawned
+        )
+            throw new Error(
+                "Production bundle Push did not use Ignis transport"
+            );
+        console.log(
+            "Production bundle Push used the existing action and HTTP transport without native processes."
         );
         const pulled = await plugin.gitActions.pull();
         if (

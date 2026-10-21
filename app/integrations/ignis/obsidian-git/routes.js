@@ -121,6 +121,14 @@ function mountRoutes(router, service, options) {
             }, fields)
         );
     router.get(
+        "/push-state",
+        handle((id) => service.pushReadiness(id))
+    );
+    router.post(
+        "/push",
+        handle((id) => service.push(id))
+    );
+    router.get(
         "/health",
         handle((id) => service.health(id))
     );

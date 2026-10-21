@@ -56,7 +56,7 @@
             return a.localeCompare(b);
         })
     );
-    let unPushedCommits = $state(0);
+    let unPushedCommits = $state<number | undefined>(0);
     let stagedClosed: Record<string, boolean> = $state({});
     let unstagedClosed: Record<string, boolean> = $state({});
     let conflictsClosed: Record<string, boolean> = $state({});
@@ -144,12 +144,12 @@
             if (!btn || btn.id != "push") return;
             if (Platform.isMobile) {
                 btn.removeClass("button-border");
-                if (unPushedCommits > 0) {
+                if (unPushedCommits !== undefined && unPushedCommits > 0) {
                     btn.addClass("button-border");
                 }
             } else {
                 btn.firstElementChild?.removeAttribute("color");
-                if (unPushedCommits > 0) {
+                if (unPushedCommits !== undefined && unPushedCommits > 0) {
                     btn.firstElementChild?.setAttr(
                         "color",
                         "var(--text-accent)"
@@ -211,8 +211,15 @@
     }
 
     function canCommitAndSync(mode: "staged" | "all"): boolean {
-        if (isIgnis()) return false;
+        if (
+            isIgnis() &&
+            (loading ||
+                committing ||
+                (mergeInProgress && !mergeState?.canCommitMerge))
+        )
+            return false;
         if (hasConflicts) return false;
+        if (isIgnis() && mergeState?.canCommitMerge) return true;
         return mode === "all" || stagedCount > 0;
     }
 
@@ -271,10 +278,19 @@
                         commitMessage,
                         mode,
                     })
-                    .then(() => {
-                        commitMessage = plugin.settings.commitMessage;
+                    .then((result) => {
+                        if (
+                            !isIgnis() ||
+                            (result.status === "success" &&
+                                "commit" in result.value &&
+                                result.value.commit.status === "committed")
+                        )
+                            commitMessage = plugin.settings.commitMessage;
                     })
-                    .finally(triggerRefresh)
+                    .finally(() => {
+                        if (isIgnis()) loading = false;
+                        triggerRefresh();
+                    })
             );
         }
     }
@@ -320,7 +336,15 @@
             loading = false;
             return;
         }
-        unPushedCommits = await plugin.getUnpushedCommits();
+        try {
+            unPushedCommits = await plugin.getUnpushedCommits();
+        } catch (error) {
+            if (!isIgnis()) throw error;
+            // A remote readiness failure must not hide local changes or prevent
+            // the existing Commit/conflict workflow from remaining available.
+            unPushedCommits = undefined;
+            plugin.displayError(error);
+        }
 
         status = plugin.cachedStatus;
         mergeInProgress = plugin.state.mergeInProgress;
@@ -455,10 +479,12 @@
     }
 
     function push() {
-        if (isIgnis()) return;
         loading = true;
         plugin.promiseQueue.addTask(() =>
-            plugin.gitActions.push().finally(triggerRefresh)
+            plugin.gitActions.push().finally(() => {
+                if (isIgnis()) loading = false;
+                triggerRefresh();
+            })
         );
     }
     function pull() {
@@ -554,8 +580,6 @@
             <div
                 id="push"
                 class="clickable-icon nav-action-button"
-                class:is-disabled={isIgnis()}
-                aria-disabled={isIgnis()}
                 data-icon="upload"
                 aria-label="Push"
                 bind:this={buttons[4]}

@@ -4,6 +4,9 @@ import type { MergeState, MergeWorkflow } from "./mergeWorkflow";
 import { MarkdownView, moment } from "obsidian";
 import { GitManager } from "./gitManager";
 import {
+    pushState,
+    pushResult,
+    type IgnisPushState,
     fileEntries,
     ignisRequest,
     record,
@@ -23,6 +26,7 @@ import {
     GitOperation,
     type BranchInfo,
     type PullResult,
+    type PushResult,
     type Status,
     type UnstagedFile,
 } from "src/types";
@@ -34,6 +38,8 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
     private pendingState?: Promise<IgnisRepositoryState>;
     private stateExpires = 0;
     private unloaded = false;
+    private pendingPushState?: Promise<IgnisPushState>;
+    private pushStateExpires = 0;
 
     private transportTail: Promise<unknown> = Promise.resolve();
     private request(
@@ -103,6 +109,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
                 () => {
                     if (this.pendingState === request)
                         this.pendingState = undefined;
+                    this.pendingPushState = undefined;
                 }
             );
         }
@@ -129,6 +136,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
         // A refresh must observe writes and other tabs immediately, even within
         // the short cache window shared by branch/count/operation readers.
         this.pendingState = undefined;
+        this.pendingPushState = undefined;
         const status = (await this.state()).status;
         if (!opts?.path) return status;
         const path = this.getRelativeRepoPath(opts.path).replace(/\/$/, "");
@@ -148,7 +156,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
         return (await this.state()).mergeInProgress;
     }
     async getUnpushedCommits(): Promise<number> {
-        return (await this.state()).unpushedCommits;
+        return (await this.getPushState()).unpushedCommits;
     }
     async getLastCommitTime(): Promise<Date | undefined> {
         const value = (await this.state()).lastCommitTime;
@@ -214,6 +222,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
         return this.withGitOperation(GitOperation.pull, async () => {
             this.ensureBrowserSafe();
             this.pendingState = undefined;
+            this.pendingPushState = undefined;
             try {
                 const value = await this.request(
                     "pull",
@@ -262,6 +271,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
                 };
             } finally {
                 this.pendingState = undefined;
+                this.pendingPushState = undefined;
                 this.app.workspace.trigger("obsidian-git:refresh");
             }
         });
@@ -299,6 +309,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
                     "Amend is unavailable in Ignis because publication state cannot be established reliably."
                 );
             this.pendingState = undefined;
+            this.pendingPushState = undefined;
             const merging = await this.isMergeInProgress();
             if (merging) mode = "staged";
             if (
@@ -307,6 +318,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
             )
                 this.ensureStagingSafe();
             this.pendingState = undefined;
+            this.pendingPushState = undefined;
             try {
                 const snapshot = await this.status();
                 const onlyStaged =
@@ -404,10 +416,12 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
                 if (typeof value.refreshWarning === "string")
                     this.plugin.displayMessage(value.refreshWarning);
                 this.pendingState = undefined;
+                this.pendingPushState = undefined;
                 this.app.workspace.trigger("obsidian-git:head-change");
                 return value.commit.files as number;
             } finally {
                 this.pendingState = undefined;
+                this.pendingPushState = undefined;
                 this.app.workspace.trigger("obsidian-git:refresh");
             }
         });
@@ -460,6 +474,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
     ): Promise<void> {
         if (operation.startsWith("stage")) this.ensureStagingSafe();
         this.pendingState = undefined;
+        this.pendingPushState = undefined;
         try {
             const value = await this.request(operation, true, payload);
             if (
@@ -475,6 +490,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
             // Also invalidate on transport failure: a cancelled request may
             // already have changed the server's index.
             this.pendingState = undefined;
+            this.pendingPushState = undefined;
             this.app.workspace.trigger("obsidian-git:refresh");
         }
     }
@@ -549,11 +565,44 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
     getUntrackedPaths(): Promise<string[]> {
         return this.unsupported();
     }
-    push(): Promise<never> {
-        return this.unsupported();
+    async getPushState(): Promise<IgnisPushState> {
+        if (!this.pendingPushState || Date.now() >= this.pushStateExpires) {
+            this.pushStateExpires = Number.POSITIVE_INFINITY;
+            const request = this.request("push-state").then(pushState);
+            this.pendingPushState = request;
+            void request.then(
+                () => {
+                    this.pushStateExpires = Date.now() + 1000;
+                },
+                () => {
+                    if (this.pendingPushState === request)
+                        this.pendingPushState = undefined;
+                }
+            );
+        }
+        return this.pendingPushState;
     }
-    canPush(): Promise<boolean> {
-        return this.unsupported();
+    async push(): Promise<PushResult> {
+        return this.withGitOperation(GitOperation.push, async () => {
+            if (
+                this.plugin.settings.squashCommitsBeforePush ||
+                this.plugin.settings.updateSubmodules
+            )
+                throw new IgnisGitError(
+                    "PUSH_OPTION_UNSUPPORTED",
+                    "Disable squash-before-push and submodule updates for Push in Ignis. These options are not supported."
+                );
+            try {
+                return pushResult(await this.request("push", true));
+            } finally {
+                this.pendingState = undefined;
+                this.pendingPushState = undefined;
+                this.app.workspace.trigger("obsidian-git:refresh");
+            }
+        });
+    }
+    async canPush(): Promise<boolean> {
+        return (await this.getPushState()).canPush;
     }
     checkout(): Promise<void> {
         return this.unsupported();
@@ -707,6 +756,7 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
                 );
             } finally {
                 this.pendingState = undefined;
+                this.pendingPushState = undefined;
                 this.app.workspace.trigger("obsidian-git:head-change");
                 this.app.workspace.trigger("obsidian-git:refresh");
             }
@@ -772,5 +822,6 @@ export class IgnisGitManager extends GitManager implements MergeWorkflow {
         this.unloaded = true;
         for (const controller of this.controllers) controller.abort();
         this.pendingState = undefined;
+        this.pendingPushState = undefined;
     }
 }

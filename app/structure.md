@@ -132,23 +132,30 @@ strings as absent.
 
 `src/platform/ignis.ts` owns runtime detection, backend selection, command
 capability guards and Ignis-specific errors. `src/gitManager/ignisGit.ts` is the
-pull-only HTTP manager; `ignisGitClient.ts` validates transport responses.
+HTTP manager for Pull, staging, Commit, Push, diffs and merge resolution; `ignisGitClient.ts` validates transport responses.
 `main.ts` chooses it before native initialization; `useSimpleGit` is false in
 Ignis so desktop editor features do not activate. `runGitAction()` blocks
 unsupported workflows before prompts or mutations unless explicitly allowed.
 Commands, Tools and restored view entry points also guard direct UI/file actions.
-Automatics retain Pull but ignore commit/sync/push schedules in this runtime.
+Automatics retain Pull and explicitly configured separate Push intervals; automatic
+commit/sync schedules remain disabled in this runtime.
 
 `integrations/ignis/obsidian-git/` is a separately installed CommonJS Ignis
 server plugin, with a scoped router, native Git service, structured errors and
 repository locks. It resolves enabled vaults through trusted server config,
-validates root-only repositories, and fetches/fast-forwards clean worktrees.
+validates root-only repositories, and implements Pull, staging, Commit, diffs and
+merge resolution. `push.js` resolves one effective push destination and publishes
+committed history through a non-force native push under the same lock.
 Blocked pulls create an excluded report without overwriting existing files.
 Server reconciliation uses Ignis's existing cache/watch system.
 `integrations/ignis/Dockerfile` and `compose.yaml` provide deployment examples;
 `bundle-smoke.cjs` checks the production bundle with native processes unavailable.
 The `ignis/` checkout is read-only reference material and excluded from this
 plugin's TypeScript checks. Never place implementation edits there.
+
+Push readiness/counts use `/push-state`, including live remote inspection independent
+of the Pull upstream. See the integration's `PUSH.md` and `TESTING_pushing.md` for
+policy, validation and deployment checks.
 
 See `docs/ignis-inspection.md` for the integration trace and
 `docs/ignis-integration.md` for installation, constraints and live smoke checks.
@@ -281,7 +288,7 @@ requires a separate formatter check. Build changes also require `pnpm run build`
 
 ## Build, releases, and documentation
 
-- `esbuild.config.mjs` bundles `src/main.ts` into ignored root `main.js` as
+- `esbuild.config.mjs` bundles `src/main.ts` into generated root `main.js` as
   CommonJS, targeting ES2018. It externalizes Obsidian/Electron/Node and selected
   CodeMirror modules, compiles Svelte with injected CSS, and injects
   `polyfill_buffer.js`. `pnpm run dev` watches with inline source maps;

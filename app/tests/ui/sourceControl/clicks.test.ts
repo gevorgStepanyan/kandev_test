@@ -449,3 +449,118 @@ describe("rendered Source Control clicks in Ignis", () => {
         }
     );
 });
+
+describe("rendered Ignis Push button", () => {
+    it.each([false, true])(
+        "uses the existing action/manager/transport chain and releases loading (count unavailable: %s)",
+        async (countUnavailable) => {
+            const { plugin, view, target } = setup();
+            plugin.settings = { ...DEFAULT_SETTINGS };
+            plugin.gitReady = true;
+            const empty = {
+                all: [],
+                changed: [],
+                staged: [],
+                conflicted: [],
+                stagedOutsideVault: 0,
+                conflictedOutsideVault: 0,
+            };
+            plugin.cachedStatus = empty;
+            plugin.getUnpushedCommits = countUnavailable
+                ? vi
+                      .fn()
+                      .mockRejectedValue(
+                          new Error("remote readiness unavailable")
+                      )
+                : vi.fn().mockResolvedValue(1);
+            plugin.updateCachedStatus = vi.fn().mockResolvedValue(empty);
+            Object.assign(view, { registerEvent: vi.fn() });
+            Object.assign(plugin.app.workspace, {
+                on: vi.fn(() => ({})),
+                offref: vi.fn(),
+            });
+            Object.assign(plugin.app.vault, {
+                on: vi.fn(() => ({})),
+                offref: vi.fn(),
+            });
+            vi.spyOn(
+                plugin.gitManager.mergeWorkflow!,
+                "getMergeState"
+            ).mockResolvedValue({
+                operation: "none",
+                kind: "clean",
+                head: "a".repeat(40),
+                unresolvedPaths: [],
+                canCommitMerge: false,
+            });
+            const pending: Promise<unknown>[] = [];
+            Object.assign(plugin, {
+                promiseQueue: {
+                    addTask(task: () => Promise<unknown>) {
+                        pending.push(task());
+                    },
+                },
+            });
+            const request = vi
+                .fn<(url: string) => Promise<Response>>()
+                .mockImplementation((url: string) =>
+                    Promise.resolve(
+                        new Response(
+                            JSON.stringify(
+                                url.includes("/push-state?")
+                                    ? {
+                                          configured: true,
+                                          canPush: true,
+                                          unpushedCommits: 1,
+                                      }
+                                    : {
+                                          error: {
+                                              code: "PUSH_NON_FAST_FORWARD",
+                                              message:
+                                                  "Pull/merge remote changes first.",
+                                          },
+                                      }
+                            ),
+                            { status: url.includes("/push-state?") ? 200 : 409 }
+                        )
+                    )
+                );
+            vi.stubGlobal("fetch", request);
+            const action = vi.spyOn(plugin.gitActions, "push");
+            const backend = vi.spyOn(plugin.gitManager, "push");
+            flushSync(() =>
+                components.push(
+                    mount(SourceControl, { target, props: { plugin, view } })
+                )
+            );
+            await vi.waitFor(() =>
+                expect(plugin.getUnpushedCommits).toHaveBeenCalled()
+            );
+            const button = target.querySelector<HTMLElement>("#push")!;
+            expect(button).not.toBeNull();
+            expect(button.classList.contains("is-disabled")).toBe(false);
+            expect(button.getAttribute("aria-disabled")).not.toBe("true");
+            button.click();
+            await Promise.all(pending);
+            expect(action).toHaveBeenCalledOnce();
+            expect(backend).toHaveBeenCalledOnce();
+            expect(
+                request.mock.calls.filter(([url]) => url.endsWith("/push"))
+            ).toHaveLength(1);
+            expect(plugin.displayError).toHaveBeenCalledTimes(
+                countUnavailable ? 2 : 1
+            );
+            expect(plugin.app.workspace.trigger).toHaveBeenCalledWith(
+                "obsidian-git:refresh"
+            );
+            flushSync();
+            expect(
+                target.querySelector("#refresh")!.classList.contains("loading")
+            ).toBe(false);
+            // No `refreshed` event is emitted by the mock app.
+            button.click();
+            await Promise.all(pending);
+            expect(action).toHaveBeenCalledTimes(2);
+        }
+    );
+});

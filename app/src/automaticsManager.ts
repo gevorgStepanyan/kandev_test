@@ -3,6 +3,7 @@ import { debounce } from "obsidian";
 import type ObsidianGit from "./main";
 
 export default class AutomaticsManager {
+    private unloaded = false;
     private timeoutIDCommitAndSync?: number;
     private timeoutIDPush?: number;
     private timeoutIDPull?: number;
@@ -30,16 +31,13 @@ export default class AutomaticsManager {
     }
 
     async init() {
+        this.unloaded = false;
         if (!isIgnis()) await this.setUpAutoCommitAndSync();
-        else if (
-            this.plugin.settings.autoSaveInterval > 0 ||
-            this.plugin.settings.autoPushInterval > 0
-        )
+        else if (this.plugin.settings.autoSaveInterval > 0)
             this.plugin.displayIgnisFutureFeature();
         const lastAutos = this.loadLastAuto();
 
         if (
-            !isIgnis() &&
             this.plugin.settings.differentIntervalCommitAndPush &&
             this.plugin.settings.autoPushInterval > 0
         ) {
@@ -59,6 +57,7 @@ export default class AutomaticsManager {
     }
 
     unload() {
+        this.unloaded = true;
         this.clearAutoPull();
         this.clearAutoPush();
         this.clearAutoCommitAndSync();
@@ -73,7 +72,7 @@ export default class AutomaticsManager {
     reload(...type: ("commit" | "push" | "pull")[]) {
         if (this.plugin.localStorage.getPausedAutomatics()) return;
 
-        if (!isIgnis() && type.contains("commit")) {
+        if (!isIgnis() && type.includes("commit")) {
             this.clearAutoCommitAndSync();
             if (this.plugin.settings.autoSaveInterval > 0) {
                 this.startAutoCommitAndSync(
@@ -81,7 +80,7 @@ export default class AutomaticsManager {
                 );
             }
         }
-        if (!isIgnis() && type.contains("push")) {
+        if (type.includes("push")) {
             this.clearAutoPush();
             if (
                 this.plugin.settings.differentIntervalCommitAndPush &&
@@ -90,7 +89,7 @@ export default class AutomaticsManager {
                 this.startAutoPush(this.plugin.settings.autoPushInterval);
             }
         }
-        if (type.contains("pull")) {
+        if (type.includes("pull")) {
             this.clearAutoPull();
             if (this.plugin.settings.autoPullInterval > 0) {
                 this.startAutoPull(this.plugin.settings.autoPullInterval);
@@ -129,6 +128,7 @@ export default class AutomaticsManager {
 
     private get isAutomaticsDisabled(): boolean {
         return (
+            this.unloaded ||
             !this.plugin.gitReady ||
             this.plugin.localStorage.getPausedAutomatics()
         );
@@ -247,7 +247,14 @@ export default class AutomaticsManager {
     }
 
     private startAutoPush(minutes?: number) {
-        if (isIgnis()) return;
+        if (isIgnis()) {
+            if (
+                !this.plugin.settings.differentIntervalCommitAndPush ||
+                this.plugin.settings.autoPushInterval <= 0
+            )
+                return;
+            this.clearAutoPush();
+        }
         if (this.isAutomaticsDisabled) {
             return;
         }
@@ -259,9 +266,32 @@ export default class AutomaticsManager {
     }
 
     private doAutoPush(): void {
-        if (isIgnis()) return;
         this.plugin.promiseQueue.addTask(
-            () => this.plugin.gitActions.push(),
+            async () => {
+                if (isIgnis()) {
+                    if (
+                        this.isAutomaticsDisabled ||
+                        this.plugin.settings.disablePush ||
+                        !this.plugin.settings.differentIntervalCommitAndPush ||
+                        this.plugin.settings.autoPushInterval <= 0
+                    )
+                        return;
+                    try {
+                        if (!(await this.plugin.gitManager.canPush())) return;
+                    } catch (error) {
+                        this.plugin.displayError(error);
+                        return;
+                    }
+                    if (
+                        this.isAutomaticsDisabled ||
+                        this.plugin.settings.disablePush ||
+                        !this.plugin.settings.differentIntervalCommitAndPush ||
+                        this.plugin.settings.autoPushInterval <= 0
+                    )
+                        return;
+                }
+                await this.plugin.gitActions.push();
+            },
             () => {
                 this.saveLastAuto(new Date(), "push");
                 this.startAutoPush();
